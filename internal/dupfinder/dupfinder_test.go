@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/exterex/morphic/internal/dupfinder"
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/dupfinder"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // assetsDir returns the path to assets/test from internal/dupfinder/.

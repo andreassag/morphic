@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // ScanJob represents a running or completed dupfinder job.

@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/corona10/goimagehash"
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // ImageInfo stores information about an image file.

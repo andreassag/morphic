@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // ScanResult holds the output of a folder scan.

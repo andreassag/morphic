@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/exterex/morphic/internal/shared"
-	"github.com/exterex/morphic/web"
+	"github.com/andreassag/morphic/internal/shared"
+	"github.com/andreassag/morphic/web"
 )
 
 func main() {

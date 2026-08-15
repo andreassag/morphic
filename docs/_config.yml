@@ -2,6 +2,6 @@ title: morphic
 description: A self-hosted media toolkit — format conversion, duplicate detection, and file organisation in a single web UI.
 theme: jekyll-theme-cayman
 show_downloads: false
-repository: exterex/morphic
+repository: andreassag/morphic
 github:
-  repository_url: https://github.com/exterex/morphic
+  repository_url: https://github.com/andreassag/morphic

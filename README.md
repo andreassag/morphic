@@ -2,7 +2,7 @@
 
 A self-hosted media toolkit — format conversion, duplicate detection, and file organisation in a single dark-themed web UI, built entirely in Go.
 
-[![Build](https://github.com/exterex/morphic/actions/workflows/documentation.yml/badge.svg)](https://github.com/exterex/morphic/actions/workflows/documentation.yml)
+[![Build](https://github.com/andreassag/morphic/actions/workflows/documentation.yml/badge.svg)](https://github.com/andreassag/morphic/actions/workflows/documentation.yml)
 
 ---
 
@@ -48,7 +48,7 @@ Restructure a media collection into clean date-based folders or rename files in 
 ## Quick Start
 
 ```bash
-git clone https://github.com/exterex/morphic
+git clone https://github.com/andreassag/morphic
 cd morphic
 make build          # compiles to ./bin/morphic
 ./bin/morphic       # opens http://127.0.0.1:8000 in the browser
