@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/disintegration/imaging"
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // toWindowsPath converts a WSL /mnt/X/... path to a Windows X:\... path.

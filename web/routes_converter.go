@@ -5,8 +5,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/exterex/morphic/internal/converter"
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/converter"
+	"github.com/andreassag/morphic/internal/shared"
 	"github.com/gin-gonic/gin"
 )
 

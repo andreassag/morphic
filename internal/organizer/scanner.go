@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // ScanJob represents an organizer scan/plan/execute job.

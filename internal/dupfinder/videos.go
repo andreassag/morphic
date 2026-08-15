@@ -14,7 +14,7 @@ import (
 
 	"github.com/corona10/goimagehash"
 	"github.com/disintegration/imaging"
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // VideoInfo stores information about a video file.
