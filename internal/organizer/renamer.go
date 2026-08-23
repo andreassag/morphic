@@ -1,6 +1,7 @@
 package organizer
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -99,9 +100,13 @@ func PlanRename(files []string, tmpl string, operation string, startSeq int) []R
 	return plan
 }
 
-// ExecuteRename executes the rename plan.
-func ExecuteRename(plan []RenamePlanEntry, operation string) {
+// ExecuteRename executes the rename plan with context cancellation.
+func ExecuteRename(ctx context.Context, plan []RenamePlanEntry, operation string) {
 	for i := range plan {
+		if ctx.Err() != nil {
+			return
+		}
+
 		if plan[i].Status == "conflict" {
 			continue
 		}

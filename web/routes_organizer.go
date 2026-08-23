@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/exterex/morphic/internal/organizer"
@@ -13,6 +14,7 @@ func registerOrganizerRoutes(r *gin.Engine) {
 		g.POST("/plan", handleOrganizerPlan)
 		g.POST("/execute", handleOrganizerExecute)
 		g.GET("/status/:id", handleOrganizerStatus)
+		g.GET("/status/:id/stream", handleOrganizerStream)
 		g.POST("/cancel/:id", handleOrganizerCancel)
 	}
 }
@@ -28,12 +30,12 @@ func handleOrganizerPlan(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 
-	if req.Folder == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "folder is required"})
+	if req.Folder == "" || !isAbsPath(req.Folder) || !isDir(req.Folder) {
+		respondError(c, http.StatusBadRequest, "INVALID_FOLDER", "Valid folder is required")
 		return
 	}
 	if req.StartSeq <= 0 {
@@ -41,6 +43,7 @@ func handleOrganizerPlan(c *gin.Context) {
 	}
 
 	jobID := organizer.StartPlanJob(
+		context.Background(),
 		req.Folder, req.Mode, req.Template,
 		req.Destination, req.Operation, req.StartSeq,
 	)
@@ -53,12 +56,12 @@ func handleOrganizerExecute(c *gin.Context) {
 		JobID string `json:"job_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.JobID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "job_id required"})
+		respondError(c, http.StatusBadRequest, "MISSING_JOB_ID", "job_id required")
 		return
 	}
 
-	if !organizer.ExecuteJob(req.JobID) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "job not found or not in planned state"})
+	if !organizer.ExecuteJob(context.Background(), req.JobID) {
+		respondError(c, http.StatusNotFound, "NOT_FOUND", "job not found or not in planned state")
 		return
 	}
 
@@ -69,7 +72,7 @@ func handleOrganizerStatus(c *gin.Context) {
 	id := c.Param("id")
 	job, ok := organizer.GetJob(id)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+		respondError(c, http.StatusNotFound, "NOT_FOUND", "job not found")
 		return
 	}
 
@@ -84,7 +87,7 @@ func handleOrganizerStatus(c *gin.Context) {
 		"error":     job.Error,
 	}
 
-	// Include plan when planning is done (matches Python's response)
+	// Include plan when planning is done
 	if job.Phase == "planned" || job.Phase == "executing" || job.Phase == "done" {
 		plan := organizer.GetUnifiedPlan(job)
 		resp["plan"] = plan
@@ -92,10 +95,8 @@ func handleOrganizerStatus(c *gin.Context) {
 
 		conflicts := 0
 		for _, entry := range plan {
-			if _, ok := entry["conflict"]; ok {
-				if entry["conflict"] == true {
-					conflicts++
-				}
+			if entry.Conflict {
+				conflicts++
 			}
 		}
 		resp["conflicts"] = conflicts
@@ -111,11 +112,9 @@ func handleOrganizerStatus(c *gin.Context) {
 
 func handleOrganizerCancel(c *gin.Context) {
 	id := c.Param("id")
-	job, ok := organizer.GetJob(id)
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+	if !organizer.CancelJob(id) {
+		respondError(c, http.StatusNotFound, "NOT_FOUND", "job not found")
 		return
 	}
-	job.Cancel()
 	c.JSON(http.StatusOK, gin.H{"status": "cancelling"})
 }

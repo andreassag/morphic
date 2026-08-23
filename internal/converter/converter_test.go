@@ -1,6 +1,7 @@
 package converter_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,7 +94,7 @@ func TestConvertImage_jpgToPng(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	out, err := converter.ConvertImage(src, ".png", tmp)
+	out, err := converter.ConvertImage(context.Background(), src, ".png", tmp)
 	if err != nil {
 		t.Fatalf("ConvertImage jpg→png failed: %v", err)
 	}
@@ -112,7 +113,7 @@ func TestConvertImage_pngToWebp(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	out, err := converter.ConvertImage(src, ".webp", tmp)
+	out, err := converter.ConvertImage(context.Background(), src, ".webp", tmp)
 	if err != nil {
 		t.Fatalf("ConvertImage png→webp failed: %v", err)
 	}
@@ -128,7 +129,7 @@ func TestConvertImage_tifToJpg(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	out, err := converter.ConvertImage(src, ".jpg", tmp)
+	out, err := converter.ConvertImage(context.Background(), src, ".jpg", tmp)
 	if err != nil {
 		t.Fatalf("ConvertImage tif→jpg failed: %v", err)
 	}
@@ -144,7 +145,7 @@ func TestConvertImage_rgbaPngToJpg(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	out, err := converter.ConvertImage(src, ".jpg", tmp)
+	out, err := converter.ConvertImage(context.Background(), src, ".jpg", tmp)
 	if err != nil {
 		t.Fatalf("ConvertImage rgba.png→jpg failed: %v", err)
 	}
@@ -161,11 +162,11 @@ func TestConvertImage_noOverwrite(t *testing.T) {
 
 	tmp := t.TempDir()
 	// Convert twice — second call must not overwrite; it adds "_converted" suffix
-	out1, err := converter.ConvertImage(src, ".png", tmp)
+	out1, err := converter.ConvertImage(context.Background(), src, ".png", tmp)
 	if err != nil {
 		t.Fatalf("first convert failed: %v", err)
 	}
-	out2, err := converter.ConvertImage(src, ".png", tmp)
+	out2, err := converter.ConvertImage(context.Background(), src, ".png", tmp)
 	if err != nil {
 		t.Fatalf("second convert failed: %v", err)
 	}
@@ -202,28 +203,28 @@ func TestVideoConversions_nonEmpty(t *testing.T) {
 // ── Input validation ─────────────────────────────────────────────────────────
 
 func TestConvertImage_relativePath(t *testing.T) {
-	_, err := converter.ConvertImage("relative/path/image.jpg", ".png", "")
+	_, err := converter.ConvertImage(context.Background(), "relative/path/image.jpg", ".png", "")
 	if err == nil {
 		t.Error("expected error for relative source path, got nil")
 	}
 }
 
 func TestConvertImage_nullBytePath(t *testing.T) {
-	_, err := converter.ConvertImage("/valid/path/image\x00.jpg", ".png", "")
+	_, err := converter.ConvertImage(context.Background(), "/valid/path/image\x00.jpg", ".png", "")
 	if err == nil {
 		t.Error("expected error for source path containing NUL byte, got nil")
 	}
 }
 
 func TestConvertVideo_relativePath(t *testing.T) {
-	_, err := converter.ConvertVideo("relative/path/video.mp4", ".mkv", "", "", 0)
+	_, err := converter.ConvertVideo(context.Background(), "relative/path/video.mp4", ".mkv", "", "", 0)
 	if err == nil {
 		t.Error("expected error for relative source path, got nil")
 	}
 }
 
 func TestConvertVideo_nullBytePath(t *testing.T) {
-	_, err := converter.ConvertVideo("/valid/path/video\x00.mp4", ".mkv", "", "", 0)
+	_, err := converter.ConvertVideo(context.Background(), "/valid/path/video\x00.mp4", ".mkv", "", "", 0)
 	if err == nil {
 		t.Error("expected error for source path containing NUL byte, got nil")
 	}

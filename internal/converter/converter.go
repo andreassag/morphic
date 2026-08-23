@@ -1,6 +1,7 @@
 package converter
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,59 +13,15 @@ import (
 	"github.com/exterex/morphic/internal/shared"
 )
 
-// toWindowsPath converts a WSL /mnt/X/... path to a Windows X:\... path.
-// Windows-native executables (e.g. ffmpeg.exe) cannot access /mnt/ paths directly.
-// Paths not matching /mnt/<drive>/ are returned unchanged.
-func toWindowsPath(p string) string {
-	// /mnt/d/foo/bar → D:\foo\bar
-	if !strings.HasPrefix(p, "/mnt/") || len(p) < 7 {
-		return p
-	}
-	rest := p[5:] // strip "/mnt/"
-	slash := strings.IndexByte(rest, '/')
-	var drive, tail string
-	if slash == -1 {
-		drive = rest
-		tail = ""
-	} else {
-		drive = rest[:slash]
-		tail = rest[slash+1:]
-	}
-	if len(drive) != 1 {
-		return p
-	}
-	return strings.ToUpper(drive) + ":\\" + strings.ReplaceAll(tail, "/", "\\")
-}
-
-// pathForBin returns the path in the format expected by the given binary.
-// When bin is a Windows executable (.exe), WSL /mnt/ paths are converted.
-func pathForBin(bin, p string) string {
-	if strings.HasSuffix(strings.ToLower(bin), ".exe") {
-		return toWindowsPath(p)
-	}
-	return p
-}
-
-// On WSL2, ffmpeg.exe (Windows build) supports AVIF output; /usr/bin/ffmpeg does not.
-func ffmpegCandidates() []string {
-	var bins []string
-	for _, name := range []string{"ffmpeg", "ffmpeg.exe"} {
-		if _, err := exec.LookPath(name); err == nil {
-			bins = append(bins, name)
-		}
-	}
-	return bins
-}
-
 // probeVideoBitrate returns the total bitrate (bits/s) of source, or 0 on failure.
 // It derives the ffprobe binary from the ffmpeg binary (ffmpeg → ffprobe, ffmpeg.exe → ffprobe.exe).
-func probeVideoBitrate(source, ffmpegBin string) int64 {
+func probeVideoBitrate(ctx context.Context, source, ffmpegBin string) int64 {
 	probeBin := strings.Replace(ffmpegBin, "ffmpeg", "ffprobe", 1)
 	if _, err := exec.LookPath(probeBin); err != nil {
 		return 0
 	}
-	src := pathForBin(probeBin, source)
-	out, err := exec.Command(probeBin,
+	src := shared.PathForBin(probeBin, source)
+	out, err := exec.CommandContext(ctx, probeBin,
 		"-v", "quiet",
 		"-show_entries", "format=bit_rate",
 		"-of", "default=noprint_wrappers=1",
@@ -84,8 +41,8 @@ func probeVideoBitrate(source, ffmpegBin string) int64 {
 }
 
 // ffmpegHasEncoder checks if the given binary has a particular encoder.
-func ffmpegHasEncoder(bin, encoder string) bool {
-	out, err := exec.Command(bin, "-hide_banner", "-encoders").Output()
+func ffmpegHasEncoder(ctx context.Context, bin, encoder string) bool {
+	out, err := exec.CommandContext(ctx, bin, "-hide_banner", "-encoders").Output()
 	if err != nil {
 		return false
 	}
@@ -99,9 +56,9 @@ func ffmpegHasEncoder(bin, encoder string) bool {
 
 // getVideoEncoder returns the ffmpeg encoder name for the given codec ID.
 // Codec IDs: h264, h265, av1, vp8, vp9.
-func getVideoEncoder(codec string) (string, error) {
+func getVideoEncoder(ctx context.Context, codec string) (string, error) {
 	bin := "ffmpeg"
-	if candidates := ffmpegCandidates(); len(candidates) > 0 {
+	if candidates := shared.FFmpegCandidates(); len(candidates) > 0 {
 		bin = candidates[0]
 	}
 
@@ -112,7 +69,7 @@ func getVideoEncoder(codec string) (string, error) {
 		return "libx265", nil
 	case "av1":
 		for _, enc := range []string{"libsvtav1", "libaom-av1"} {
-			if ffmpegHasEncoder(bin, enc) {
+			if ffmpegHasEncoder(ctx, bin, enc) {
 				return enc, nil
 			}
 		}
@@ -177,8 +134,8 @@ func IsValidTargetExt(ext string) bool {
 	return vidErr == nil
 }
 
-// ConvertImage converts an image file using the imaging library.
-func ConvertImage(source, targetExt, outputDir string) (string, error) {
+// ConvertImage converts an image file using the imaging library or ffmpeg.
+func ConvertImage(ctx context.Context, source, targetExt, outputDir string) (string, error) {
 	if !filepath.IsAbs(source) || strings.Contains(source, "\x00") {
 		return "", fmt.Errorf("invalid source path")
 	}
@@ -190,7 +147,9 @@ func ConvertImage(source, targetExt, outputDir string) (string, error) {
 	stem := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))
 	var dest string
 	if outputDir != "" {
-		os.MkdirAll(outputDir, 0755)
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			return "", fmt.Errorf("creating output directory: %w", err)
+		}
 		dest = filepath.Join(outputDir, stem+ext)
 	} else {
 		dest = filepath.Join(filepath.Dir(source), stem+ext)
@@ -202,15 +161,15 @@ func ConvertImage(source, targetExt, outputDir string) (string, error) {
 			strings.TrimSuffix(filepath.Base(dest), ext)+"_converted"+ext)
 	}
 
-	sourceExt := shared.NormaliseExt(strings.ToLower(filepath.Ext(source)))
+	sourceExt := shared.NormaliseExt(filepath.Ext(source))
 	if sourceExt == ".avif" || ext == ".avif" {
-		return convertImageByFFmpeg(source, dest, ext)
+		return convertImageByFFmpeg(ctx, source, dest, ext)
 	}
 
 	img, err := imaging.Open(source)
 	if err != nil {
-		// Relax: fallback to ffmpeg conversion for special unsupported formats
-		return convertImageByFFmpeg(source, dest, ext)
+		// Fallback to ffmpeg conversion for formats imaging cannot decode
+		return convertImageByFFmpeg(ctx, source, dest, ext)
 	}
 
 	opts := []imaging.EncodeOption{}
@@ -221,14 +180,14 @@ func ConvertImage(source, targetExt, outputDir string) (string, error) {
 
 	if err := imaging.Save(img, dest, opts...); err != nil {
 		// Fallback to ffmpeg for formats imaging can't encode
-		return convertImageByFFmpeg(source, dest, ext)
+		return convertImageByFFmpeg(ctx, source, dest, ext)
 	}
 
 	return dest, nil
 }
 
-func convertImageByFFmpeg(source, dest, ext string) (string, error) {
-	candidates := ffmpegCandidates()
+func convertImageByFFmpeg(ctx context.Context, source, dest, ext string) (string, error) {
+	candidates := shared.FFmpegCandidates()
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("ffmpeg is not installed or not on PATH")
 	}
@@ -237,47 +196,41 @@ func convertImageByFFmpeg(source, dest, ext string) (string, error) {
 
 	var lastErr error
 	for _, bin := range candidates {
-		src := pathForBin(bin, source)
-		dst := pathForBin(bin, dest)
+		src := shared.PathForBin(bin, source)
+		dst := shared.PathForBin(bin, dest)
 		args := []string{"-y", "-i", src}
 
 		if extLower == ".avif" {
-			// AV1 (YUV 4:2:0) requires even dimensions and no alpha channel.
-			// crop: trim 1px from odd dimensions. format=yuv420p: strip alpha (rgba → yuv420p).
 			args = append(args, "-vf", "crop=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p")
-			if ffmpegHasEncoder(bin, "libsvtav1") {
+			if ffmpegHasEncoder(ctx, bin, "libsvtav1") {
 				args = append(args, "-c:v", "libsvtav1", "-crf", "28", "-preset", "8")
-			} else if ffmpegHasEncoder(bin, "libaom-av1") {
+			} else if ffmpegHasEncoder(ctx, bin, "libaom-av1") {
 				args = append(args, "-c:v", "libaom-av1", "-crf", "28", "-cpu-used", "4")
 			} else {
 				args = append(args, "-c:v", "libx264")
 			}
 		} else if extLower == ".webp" {
 			args = append(args, "-c:v", "libwebp")
-		} else if extLower == ".png" || extLower == ".jpg" || extLower == ".jpeg" || extLower == ".bmp" || extLower == ".gif" {
-			// no explicit codec required
-		} else {
-			// generic fallback for unknown image extensions
 		}
 
 		args = append(args, dst)
 
-		out, err := exec.Command(bin, args...).CombinedOutput()
+		out, err := exec.CommandContext(ctx, bin, args...).CombinedOutput()
 		if err == nil {
 			return dest, nil
 		}
-		lastErr = fmt.Errorf("ffmpeg image conversion failed: %s", strings.TrimSpace(string(out)))
+		lastErr = fmt.Errorf("ffmpeg image conversion failed: %s (err: %w)", strings.TrimSpace(string(out)), err)
 	}
 	return "", lastErr
 }
 
 // ConvertVideo converts a video file using ffmpeg.
 // codec is one of: h264, h265, av1, vp8, vp9. Defaults to h264 when empty.
-func ConvertVideo(source, targetExt, codec, outputDir string, av1CRF int) (string, error) {
+func ConvertVideo(ctx context.Context, source, targetExt, codec, outputDir string, av1CRF int) (string, error) {
 	if !filepath.IsAbs(source) || strings.Contains(source, "\x00") {
 		return "", fmt.Errorf("invalid source path")
 	}
-	candidates := ffmpegCandidates()
+	candidates := shared.FFmpegCandidates()
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("ffmpeg is not installed or not on PATH")
 	}
@@ -291,7 +244,9 @@ func ConvertVideo(source, targetExt, codec, outputDir string, av1CRF int) (strin
 	stem := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))
 	var dest string
 	if outputDir != "" {
-		os.MkdirAll(outputDir, 0755)
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			return "", fmt.Errorf("creating output directory: %w", err)
+		}
 		dest = filepath.Join(outputDir, stem+ext)
 	} else {
 		dest = filepath.Join(filepath.Dir(source), stem+ext)
@@ -307,12 +262,12 @@ func ConvertVideo(source, targetExt, codec, outputDir string, av1CRF int) (strin
 		codec = "h264"
 	}
 
-	encoder, err := getVideoEncoder(codec)
+	encoder, err := getVideoEncoder(ctx, codec)
 	if err != nil {
 		return "", err
 	}
 
-	cmd := []string{bin, "-y", "-i", pathForBin(bin, source), "-c:v", encoder, "-c:a", "aac"}
+	cmd := []string{bin, "-y", "-i", shared.PathForBin(bin, source), "-c:v", encoder, "-c:a", "aac"}
 
 	isAV1 := encoder == "libsvtav1" || encoder == "libaom-av1"
 	if isAV1 {
@@ -347,18 +302,18 @@ func ConvertVideo(source, targetExt, codec, outputDir string, av1CRF int) (strin
 
 	// For AV1, cap output bitrate at 65% of source to guarantee a size reduction.
 	if isAV1 {
-		if br := probeVideoBitrate(source, bin); br > 0 {
+		if br := probeVideoBitrate(ctx, source, bin); br > 0 {
 			maxrate := br * 65 / 100
 			cmd = append(cmd, "-maxrate", fmt.Sprintf("%d", maxrate),
 				"-bufsize", fmt.Sprintf("%d", br*2))
 		}
 	}
 
-	cmd = append(cmd, pathForBin(bin, dest))
+	cmd = append(cmd, shared.PathForBin(bin, dest))
 
-	out, err2 := exec.Command(cmd[0], cmd[1:]...).CombinedOutput()
+	out, err2 := exec.CommandContext(ctx, cmd[0], cmd[1:]...).CombinedOutput()
 	if err2 != nil {
-		return "", fmt.Errorf("ffmpeg error: %s", strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("ffmpeg error: %s (err: %w)", strings.TrimSpace(string(out)), err2)
 	}
 
 	return dest, nil
@@ -366,12 +321,12 @@ func ConvertVideo(source, targetExt, codec, outputDir string, av1CRF int) (strin
 
 // ConvertFile is the high-level converter — routes to image or video handler.
 // codec is used only for video conversion (h264, h265, av1, vp8, vp9).
-func ConvertFile(source, targetExt, codec, outputDir string, av1CRF int) (string, error) {
+func ConvertFile(ctx context.Context, source, targetExt, codec, outputDir string, av1CRF int) (string, error) {
 	if shared.IsImage(source) {
-		return ConvertImage(source, targetExt, outputDir)
+		return ConvertImage(ctx, source, targetExt, outputDir)
 	}
 	if shared.IsVideo(source) {
-		return ConvertVideo(source, targetExt, codec, outputDir, av1CRF)
+		return ConvertVideo(ctx, source, targetExt, codec, outputDir, av1CRF)
 	}
 	return "", fmt.Errorf("unsupported file type: %s", source)
 }

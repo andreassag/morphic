@@ -2,12 +2,12 @@ package shared
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/disintegration/imaging"
@@ -29,7 +29,7 @@ var thumbnailCache = &ThumbnailCache{
 }
 
 // GenerateImageThumbnail creates a JPEG thumbnail for an image file.
-func GenerateImageThumbnail(path string, size int) ([]byte, error) {
+func GenerateImageThumbnail(ctx context.Context, path string, size int) ([]byte, error) {
 	if size <= 0 {
 		size = DefaultThumbnailSize
 	}
@@ -42,13 +42,10 @@ func GenerateImageThumbnail(path string, size int) ([]byte, error) {
 	}
 	thumbnailCache.mu.RUnlock()
 
-	ext := strings.ToLower(filepath.Ext(path))
-	if alias, ok := Aliases[ext]; ok {
-		ext = alias
-	}
+	ext := NormaliseExt(filepath.Ext(path))
 
 	if ext == ".avif" {
-		data, err := extractImageFrame(path, "00:00:00", size)
+		data, err := extractImageFrame(ctx, path, "00:00:00", size)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate AVIF thumbnail %s: %w", path, err)
 		}
@@ -63,7 +60,7 @@ func GenerateImageThumbnail(path string, size int) ([]byte, error) {
 	img, err := imaging.Open(path, imaging.AutoOrientation(true))
 	if err != nil {
 		// Fallback to ffmpeg for formats that imaging can't decode.
-		ffData, ffErr := extractImageFrame(path, "00:00:00", size)
+		ffData, ffErr := extractImageFrame(ctx, path, "00:00:00", size)
 		if ffErr == nil {
 			thumbnailCache.mu.Lock()
 			thumbnailCache.store[cacheKey] = ffData
@@ -89,7 +86,7 @@ func GenerateImageThumbnail(path string, size int) ([]byte, error) {
 }
 
 // GenerateVideoThumbnail creates a JPEG thumbnail for a video file using ffmpeg.
-func GenerateVideoThumbnail(path string, size int) ([]byte, error) {
+func GenerateVideoThumbnail(ctx context.Context, path string, size int) ([]byte, error) {
 	if size <= 0 {
 		size = DefaultThumbnailSize
 	}
@@ -103,9 +100,9 @@ func GenerateVideoThumbnail(path string, size int) ([]byte, error) {
 	thumbnailCache.mu.RUnlock()
 
 	// Try extracting frame at 1 second, fallback to 0 seconds
-	data, err := extractVideoFrame(path, "00:00:01", size)
+	data, err := extractVideoFrame(ctx, path, "00:00:01", size)
 	if err != nil {
-		data, err = extractVideoFrame(path, "00:00:00", size)
+		data, err = extractVideoFrame(ctx, path, "00:00:00", size)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract video frame from %s: %w", path, err)
 		}
@@ -118,8 +115,8 @@ func GenerateVideoThumbnail(path string, size int) ([]byte, error) {
 	return data, nil
 }
 
-func extractVideoFrame(videoPath, seekTime string, size int) ([]byte, error) {
-	img, err := extractImageFromFFmpeg(videoPath, seekTime, size)
+func extractVideoFrame(ctx context.Context, videoPath, seekTime string, size int) ([]byte, error) {
+	img, err := extractImageFromFFmpeg(ctx, videoPath, seekTime, size)
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +129,8 @@ func extractVideoFrame(videoPath, seekTime string, size int) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func extractImageFrame(imagePath, seekTime string, size int) ([]byte, error) {
-	img, err := extractImageFromFFmpeg(imagePath, seekTime, size)
+func extractImageFrame(ctx context.Context, imagePath, seekTime string, size int) ([]byte, error) {
+	img, err := extractImageFromFFmpeg(ctx, imagePath, seekTime, size)
 	if err != nil {
 		return nil, err
 	}
@@ -144,32 +141,20 @@ func extractImageFrame(imagePath, seekTime string, size int) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
-}
-
-func ffmpegCandidates() []string {
-	var bins []string
-	for _, name := range []string{"ffmpeg"} {
-		if _, err := exec.LookPath(name); err == nil {
-			bins = append(bins, name)
-		}
-	}
-	return bins
 }
 
 // OpenImageFile opens an image from any format supported by imaging or ffmpeg.
-// It uses imaging.Open for common formats and falls back to ffmpeg for formats
-// that imaging cannot handle (e.g. AVIF).
-func OpenImageFile(path string) (image.Image, error) {
+func OpenImageFile(ctx context.Context, path string) (image.Image, error) {
 	img, err := imaging.Open(path, imaging.AutoOrientation(true))
 	if err == nil {
 		return img, nil
 	}
 	// imaging failed — try ffmpeg (handles AVIF, HEIC, …)
-	return extractImageFromFFmpeg(path, "00:00:00", 0)
+	return extractImageFromFFmpeg(ctx, path, "00:00:00", 0)
 }
 
-func extractImageFromFFmpeg(srcPath, seekTime string, size int) (image.Image, error) {
-	bins := ffmpegCandidates()
+func extractImageFromFFmpeg(ctx context.Context, srcPath, seekTime string, size int) (image.Image, error) {
+	bins := FFmpegCandidates()
 	if len(bins) == 0 {
 		return nil, fmt.Errorf("ffmpeg not found in PATH")
 	}
@@ -177,7 +162,7 @@ func extractImageFromFFmpeg(srcPath, seekTime string, size int) (image.Image, er
 	var lastErr error
 	for _, bin := range bins {
 		for _, codec := range []string{"png", "mjpeg"} {
-			args := []string{"-ss", seekTime, "-i", srcPath, "-frames:v", "1"}
+			args := []string{"-ss", seekTime, "-i", PathForBin(bin, srcPath), "-frames:v", "1"}
 			if size > 0 {
 				args = append(args, "-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", size, size))
 			}
@@ -188,7 +173,7 @@ func extractImageFromFFmpeg(srcPath, seekTime string, size int) (image.Image, er
 			args = append(args, "pipe:1")
 
 			var stdout, stderr bytes.Buffer
-			cmd := exec.Command(bin, args...)
+			cmd := exec.CommandContext(ctx, bin, args...)
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
 
@@ -210,24 +195,4 @@ func extractImageFromFFmpeg(srcPath, seekTime string, size int) (image.Image, er
 		}
 	}
 	return nil, fmt.Errorf("all ffmpeg variants failed for %s: %w", srcPath, lastErr)
-}
-
-// IsImageFile checks if a path has an image extension.
-func IsImageFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	if alias, ok := Aliases[ext]; ok {
-		ext = alias
-	}
-	_, ok := ImageExtensions[ext]
-	return ok
-}
-
-// IsVideoFile checks if a path has a video extension.
-func IsVideoFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	if alias, ok := Aliases[ext]; ok {
-		ext = alias
-	}
-	_, ok := VideoExtensions[ext]
-	return ok
 }

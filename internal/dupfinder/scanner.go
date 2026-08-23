@@ -1,7 +1,9 @@
 package dupfinder
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -10,32 +12,51 @@ import (
 	"github.com/exterex/morphic/internal/shared"
 )
 
+// MediaEntry describes one file entry within a duplicate group.
+type MediaEntry struct {
+	Path              string  `json:"path"`
+	Filename          string  `json:"filename"`
+	Directory         string  `json:"directory"`
+	Width             int     `json:"width"`
+	Height            int     `json:"height"`
+	Resolution        string  `json:"resolution"`
+	Format            string  `json:"format,omitempty"`
+	Duration          float64 `json:"duration,omitempty"`
+	DurationFormatted string  `json:"duration_formatted,omitempty"`
+	FPS               float64 `json:"fps,omitempty"`
+	FileSize          int64   `json:"file_size"`
+	FileSizeFormatted string  `json:"file_size_formatted"`
+	Similarity        float64 `json:"similarity"`
+	Type              string  `json:"type"`
+}
+
 // ScanJob represents a running or completed dupfinder job.
 type ScanJob struct {
 	shared.Job
 	mu sync.Mutex
 
-	Folder         string                     `json:"folder"`
-	ScanType       string                     `json:"scan_type"` // "images", "videos", "both"
-	ImageThreshold float64                    `json:"image_threshold"`
-	VideoThreshold float64                    `json:"video_threshold"`
-	ImageGroups    [][]map[string]interface{} `json:"image_groups,omitempty"`
-	VideoGroups    [][]map[string]interface{} `json:"video_groups,omitempty"`
-	TotalFound     int                        `json:"total_files_found"`
-	TotalProcessed int                        `json:"total_files_processed"`
-	SpaceSavings   int64                      `json:"space_savings"`
+	Folder         string         `json:"folder"`
+	ScanType       string         `json:"scan_type"` // "images", "videos", "both"
+	ImageThreshold float64        `json:"image_threshold"`
+	VideoThreshold float64        `json:"video_threshold"`
+	ImageGroups    [][]MediaEntry `json:"image_groups,omitempty"`
+	VideoGroups    [][]MediaEntry `json:"video_groups,omitempty"`
+	TotalFound     int            `json:"total_files_found"`
+	TotalProcessed int            `json:"total_files_processed"`
+	SpaceSavings   int64          `json:"space_savings"`
 }
 
 var store = shared.NewJobStore[ScanJob]()
 
-func init() {
-	store.StartCleanup(30*time.Minute, func(j *ScanJob) time.Time {
+// StartCleanup starts background cleanup of expired jobs.
+func StartCleanup(ctx context.Context, ttl time.Duration) {
+	store.StartCleanup(ctx, ttl, func(j *ScanJob) time.Time {
 		return j.DoneAt
 	})
 }
 
 // StartJob creates and launches a new dupfinder job.
-func StartJob(folder, scanType string, imageThreshold, videoThreshold float64) string {
+func StartJob(parentCtx context.Context, folder, scanType string, imageThreshold, videoThreshold float64) string {
 	job := &ScanJob{
 		Job:            shared.NewJob(),
 		Folder:         folder,
@@ -45,7 +66,11 @@ func StartJob(folder, scanType string, imageThreshold, videoThreshold float64) s
 	}
 	job.Status = shared.JobStatusRunning
 	store.Set(job.ID, job)
-	go runScan(job)
+
+	ctx, cancel := context.WithCancel(parentCtx)
+	store.RegisterCancel(job.ID, cancel)
+
+	go runScan(ctx, job)
 	return job.ID
 }
 
@@ -54,7 +79,12 @@ func GetJob(id string) (*ScanJob, bool) {
 	return store.Get(id)
 }
 
-func runScan(job *ScanJob) {
+// CancelJob cancels a running job by ID.
+func CancelJob(id string) bool {
+	return store.Cancel(id)
+}
+
+func runScan(ctx context.Context, job *ScanJob) {
 	defer func() {
 		if r := recover(); r != nil {
 			job.mu.Lock()
@@ -71,12 +101,12 @@ func runScan(job *ScanJob) {
 
 	// Image scan
 	if job.ScanType == "images" || job.ScanType == "both" {
-		scanImages(job)
+		scanImages(ctx, job)
 	}
 
 	// Check for cancellation between phases
 	select {
-	case <-job.Ctx().Done():
+	case <-ctx.Done():
 		job.mu.Lock()
 		job.Status = shared.JobStatusCancelled
 		job.DoneAt = time.Now()
@@ -88,12 +118,12 @@ func runScan(job *ScanJob) {
 
 	// Video scan
 	if job.ScanType == "videos" || job.ScanType == "both" {
-		scanVideos(job)
+		scanVideos(ctx, job)
 	}
 
 	// Check for cancellation before finalising
 	select {
-	case <-job.Ctx().Done():
+	case <-ctx.Done():
 		job.mu.Lock()
 		job.Status = shared.JobStatusCancelled
 		job.DoneAt = time.Now()
@@ -116,13 +146,17 @@ func runScan(job *ScanJob) {
 	job.mu.Unlock()
 }
 
-func scanImages(job *ScanJob) {
+func scanImages(ctx context.Context, job *ScanJob) {
 	job.mu.Lock()
 	job.Message = "Finding image files..."
 	job.mu.Unlock()
 
 	files, err := shared.FindImageFiles(job.Folder)
 	if err != nil {
+		slog.Error("dupfinder: finding image files failed", "folder", job.Folder, "err", err)
+		job.mu.Lock()
+		job.Error = err.Error()
+		job.mu.Unlock()
 		return
 	}
 
@@ -136,22 +170,39 @@ func scanImages(job *ScanJob) {
 		return
 	}
 
-	infos := ProcessImages(job.Ctx(), files, shared.DefaultNumWorkers)
+	infos := ProcessImages(ctx, files, shared.DefaultNumWorkers, func(processed, total int) {
+		job.mu.Lock()
+		job.TotalProcessed = processed
+		pctBase := 0.1
+		pctSpan := 0.3
+		if job.ScanType != "both" {
+			pctSpan = 0.6
+		}
+		if total > 0 {
+			job.Progress = pctBase + (float64(processed)/float64(total))*pctSpan
+		}
+		job.mu.Unlock()
+	})
 
-	// Return early if cancelled during hash processing
-	select {
-	case <-job.Ctx().Done():
+	if ctx.Err() != nil {
 		return
-	default:
 	}
 
 	job.mu.Lock()
-	job.TotalProcessed += len(infos)
 	job.Progress = 0.4
 	job.Message = fmt.Sprintf("Processed %d images. Finding duplicates...", len(infos))
 	job.mu.Unlock()
 
-	groups := FindImageDuplicates(infos, job.ImageThreshold)
+	groups := FindImageDuplicates(ctx, infos, job.ImageThreshold, func(progress float64) {
+		job.mu.Lock()
+		if job.ScanType == "both" {
+			job.Progress = 0.4 + (progress * 0.1)
+		} else {
+			job.Progress = 0.7 + (progress * 0.25)
+		}
+		job.mu.Unlock()
+	})
+
 	formatted := formatImageGroups(groups, infos)
 
 	job.mu.Lock()
@@ -164,13 +215,17 @@ func scanImages(job *ScanJob) {
 	job.mu.Unlock()
 }
 
-func scanVideos(job *ScanJob) {
+func scanVideos(ctx context.Context, job *ScanJob) {
 	job.mu.Lock()
 	job.Message = "Finding video files..."
 	job.mu.Unlock()
 
 	files, err := shared.FindVideoFiles(job.Folder)
 	if err != nil {
+		slog.Error("dupfinder: finding video files failed", "folder", job.Folder, "err", err)
+		job.mu.Lock()
+		job.Error = err.Error()
+		job.mu.Unlock()
 		return
 	}
 
@@ -178,7 +233,7 @@ func scanVideos(job *ScanJob) {
 	job.TotalFound += len(files)
 	job.Message = fmt.Sprintf("Found %d videos. Processing hashes...", len(files))
 	if job.ScanType == "both" {
-		job.Progress = 0.6
+		job.Progress = 0.55
 	} else {
 		job.Progress = 0.1
 	}
@@ -188,26 +243,40 @@ func scanVideos(job *ScanJob) {
 		return
 	}
 
-	infos := ProcessVideos(job.Ctx(), files, shared.DefaultNumFrames, shared.DefaultNumWorkers)
+	infos := ProcessVideos(ctx, files, shared.DefaultNumFrames, shared.DefaultNumWorkers, func(processed, total int) {
+		job.mu.Lock()
+		job.TotalProcessed = processed
+		pctBase := 0.55
+		pctSpan := 0.25
+		if job.ScanType != "both" {
+			pctBase = 0.1
+			pctSpan = 0.6
+		}
+		if total > 0 {
+			job.Progress = pctBase + (float64(processed)/float64(total))*pctSpan
+		}
+		job.mu.Unlock()
+	})
 
-	// Return early if cancelled during hash processing
-	select {
-	case <-job.Ctx().Done():
+	if ctx.Err() != nil {
 		return
-	default:
 	}
 
 	job.mu.Lock()
-	job.TotalProcessed += len(infos)
-	if job.ScanType == "both" {
-		job.Progress = 0.8
-	} else {
-		job.Progress = 0.7
-	}
+	job.Progress = 0.8
 	job.Message = fmt.Sprintf("Processed %d videos. Finding duplicates...", len(infos))
 	job.mu.Unlock()
 
-	groups := FindVideoDuplicates(infos, job.VideoThreshold)
+	groups := FindVideoDuplicates(ctx, infos, job.VideoThreshold, func(progress float64) {
+		job.mu.Lock()
+		if job.ScanType == "both" {
+			job.Progress = 0.8 + (progress * 0.15)
+		} else {
+			job.Progress = 0.7 + (progress * 0.25)
+		}
+		job.mu.Unlock()
+	})
+
 	formatted := formatVideoGroups(groups, infos)
 
 	job.mu.Lock()
@@ -216,8 +285,8 @@ func scanVideos(job *ScanJob) {
 	job.mu.Unlock()
 }
 
-func formatImageGroups(groups [][]DuplicateEntry, infos map[string]*ImageInfo) [][]map[string]interface{} {
-	var result [][]map[string]interface{}
+func formatImageGroups(groups [][]DuplicateEntry, infos map[string]*ImageInfo) [][]MediaEntry {
+	var result [][]MediaEntry
 	for _, group := range groups {
 		// Sort by file size descending
 		sort.Slice(group, func(i, j int) bool {
@@ -229,24 +298,24 @@ func formatImageGroups(groups [][]DuplicateEntry, infos map[string]*ImageInfo) [
 			return ai.FileSize > aj.FileSize
 		})
 
-		var formatted []map[string]interface{}
+		var formatted []MediaEntry
 		for _, entry := range group {
 			info := infos[entry.Path]
 			if info == nil {
 				continue
 			}
-			formatted = append(formatted, map[string]interface{}{
-				"path":                entry.Path,
-				"filename":            filepath.Base(entry.Path),
-				"directory":           filepath.Dir(entry.Path),
-				"width":               info.Width,
-				"height":              info.Height,
-				"resolution":          fmt.Sprintf("%dx%d", info.Width, info.Height),
-				"format":              info.Format,
-				"file_size":           info.FileSize,
-				"file_size_formatted": shared.FormatFileSize(info.FileSize),
-				"similarity":          float64(int(entry.Similarity*1000)) / 10,
-				"type":                "image",
+			formatted = append(formatted, MediaEntry{
+				Path:              entry.Path,
+				Filename:          filepath.Base(entry.Path),
+				Directory:         filepath.Dir(entry.Path),
+				Width:             info.Width,
+				Height:            info.Height,
+				Resolution:        fmt.Sprintf("%dx%d", info.Width, info.Height),
+				Format:            info.Format,
+				FileSize:          info.FileSize,
+				FileSizeFormatted: shared.FormatFileSize(info.FileSize),
+				Similarity:        float64(int(entry.Similarity*1000)) / 10,
+				Type:              "image",
 			})
 		}
 		if len(formatted) > 1 {
@@ -256,8 +325,8 @@ func formatImageGroups(groups [][]DuplicateEntry, infos map[string]*ImageInfo) [
 	return result
 }
 
-func formatVideoGroups(groups [][]DuplicateEntry, infos map[string]*VideoInfo) [][]map[string]interface{} {
-	var result [][]map[string]interface{}
+func formatVideoGroups(groups [][]DuplicateEntry, infos map[string]*VideoInfo) [][]MediaEntry {
+	var result [][]MediaEntry
 	for _, group := range groups {
 		sort.Slice(group, func(i, j int) bool {
 			ai := infos[group[i].Path]
@@ -268,26 +337,26 @@ func formatVideoGroups(groups [][]DuplicateEntry, infos map[string]*VideoInfo) [
 			return ai.FileSize > aj.FileSize
 		})
 
-		var formatted []map[string]interface{}
+		var formatted []MediaEntry
 		for _, entry := range group {
 			info := infos[entry.Path]
 			if info == nil {
 				continue
 			}
-			formatted = append(formatted, map[string]interface{}{
-				"path":                entry.Path,
-				"filename":            filepath.Base(entry.Path),
-				"directory":           filepath.Dir(entry.Path),
-				"width":               info.Width,
-				"height":              info.Height,
-				"resolution":          fmt.Sprintf("%dx%d", info.Width, info.Height),
-				"duration":            info.Duration,
-				"duration_formatted":  shared.FormatDuration(info.Duration),
-				"fps":                 float64(int(info.FPS*10)) / 10,
-				"file_size":           info.FileSize,
-				"file_size_formatted": shared.FormatFileSize(info.FileSize),
-				"similarity":          float64(int(entry.Similarity*1000)) / 10,
-				"type":                "video",
+			formatted = append(formatted, MediaEntry{
+				Path:              entry.Path,
+				Filename:          filepath.Base(entry.Path),
+				Directory:         filepath.Dir(entry.Path),
+				Width:             info.Width,
+				Height:            info.Height,
+				Resolution:        fmt.Sprintf("%dx%d", info.Width, info.Height),
+				Duration:          info.Duration,
+				DurationFormatted: shared.FormatDuration(info.Duration),
+				FPS:               float64(int(info.FPS*10)) / 10,
+				FileSize:          info.FileSize,
+				FileSizeFormatted: shared.FormatFileSize(info.FileSize),
+				Similarity:        float64(int(entry.Similarity*1000)) / 10,
+				Type:              "video",
 			})
 		}
 		if len(formatted) > 1 {
@@ -299,20 +368,27 @@ func formatVideoGroups(groups [][]DuplicateEntry, infos map[string]*VideoInfo) [
 
 func calculateSpaceSavings(job *ScanJob) int64 {
 	var total int64
-	allGroups := append(job.ImageGroups, job.VideoGroups...)
-	for _, group := range allGroups {
-		var sizes []int64
-		for _, item := range group {
-			if s, ok := item["file_size"].(int64); ok {
-				sizes = append(sizes, s)
-			}
-		}
-		if len(sizes) > 1 {
-			sort.Slice(sizes, func(i, j int) bool { return sizes[i] < sizes[j] })
-			for _, s := range sizes[:len(sizes)-1] {
-				total += s
-			}
-		}
+	for _, group := range job.ImageGroups {
+		total += groupSavings(group)
+	}
+	for _, group := range job.VideoGroups {
+		total += groupSavings(group)
+	}
+	return total
+}
+
+func groupSavings(group []MediaEntry) int64 {
+	if len(group) <= 1 {
+		return 0
+	}
+	var sizes []int64
+	for _, item := range group {
+		sizes = append(sizes, item.FileSize)
+	}
+	sort.Slice(sizes, func(i, j int) bool { return sizes[i] < sizes[j] })
+	var total int64
+	for _, s := range sizes[:len(sizes)-1] {
+		total += s
 	}
 	return total
 }

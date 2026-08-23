@@ -1,5 +1,5 @@
 # Go targets
-.PHONY: build test run vet tidy
+.PHONY: build test run vet tidy hooks
 
 tidy:
 	go mod tidy
@@ -12,6 +12,10 @@ test:
 
 vet:
 	go vet ./...
+
+hooks:
+	chmod +x .githooks/*
+	git config core.hooksPath .githooks
 
 run: build
 	./bin/morphic

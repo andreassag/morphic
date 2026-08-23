@@ -2,11 +2,12 @@ package dupfinder
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"math/bits"
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/corona10/goimagehash"
 	"github.com/exterex/morphic/internal/shared"
@@ -26,8 +27,12 @@ type ImageInfo struct {
 }
 
 // ComputeImageHashes loads an image and computes perceptual hashes.
-func ComputeImageHashes(path string) ImageInfo {
+func ComputeImageHashes(ctx context.Context, path string) ImageInfo {
 	info := ImageInfo{Path: path}
+
+	if ctx.Err() != nil {
+		return info
+	}
 
 	st, err := os.Stat(path)
 	if err != nil {
@@ -35,9 +40,13 @@ func ComputeImageHashes(path string) ImageInfo {
 	}
 	info.FileSize = st.Size()
 
-	img, err := shared.OpenImageFile(path)
+	img, err := shared.OpenImageFile(ctx, path)
 	if err != nil {
-		log.Printf("dupfinder: cannot open image %s: %v", path, err)
+		slog.Warn("dupfinder: cannot open image", "path", path, "err", err)
+		return info
+	}
+
+	if ctx.Err() != nil {
 		return info
 	}
 
@@ -64,11 +73,14 @@ func ComputeImageHashes(path string) ImageInfo {
 
 // ProcessImages hashes all images concurrently and returns successful results.
 // It stops accepting new work when ctx is cancelled.
-func ProcessImages(ctx context.Context, files []shared.FileInfo, numWorkers int) map[string]*ImageInfo {
+func ProcessImages(ctx context.Context, files []shared.FileInfo, numWorkers int, progressCb func(processed, total int)) map[string]*ImageInfo {
 	result := make(map[string]*ImageInfo)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, numWorkers)
+
+	total := len(files)
+	var processed int64
 
 	for _, f := range files {
 		select {
@@ -77,16 +89,23 @@ func ProcessImages(ctx context.Context, files []shared.FileInfo, numWorkers int)
 			return result
 		default:
 		}
+
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(fi shared.FileInfo) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			info := ComputeImageHashes(fi.Path)
+
+			info := ComputeImageHashes(ctx, fi.Path)
 			if info.HasHash {
 				mu.Lock()
 				result[fi.Path] = &info
 				mu.Unlock()
+			}
+
+			count := atomic.AddInt64(&processed, 1)
+			if progressCb != nil {
+				progressCb(int(count), total)
 			}
 		}(f)
 	}
@@ -127,8 +146,8 @@ type DuplicateEntry struct {
 	Similarity float64 `json:"similarity"`
 }
 
-// FindImageDuplicates finds groups of duplicate images.
-func FindImageDuplicates(infos map[string]*ImageInfo, threshold float64) [][]DuplicateEntry {
+// FindImageDuplicates finds groups of duplicate images with batching and cancellation support.
+func FindImageDuplicates(ctx context.Context, infos map[string]*ImageInfo, threshold float64, progressCb func(float64)) [][]DuplicateEntry {
 	// Bucket exact PHash matches first
 	buckets := make(map[uint64][]string)
 	for path, info := range infos {
@@ -142,6 +161,9 @@ func FindImageDuplicates(infos map[string]*ImageInfo, threshold float64) [][]Dup
 
 	// Exact hash groups
 	for _, paths := range buckets {
+		if ctx.Err() != nil {
+			return groups
+		}
 		if len(paths) > 1 {
 			sort.Strings(paths)
 			var group []DuplicateEntry
@@ -162,13 +184,23 @@ func FindImageDuplicates(infos map[string]*ImageInfo, threshold float64) [][]Dup
 	}
 	sort.Strings(remaining)
 
-	for i := 0; i < len(remaining); i++ {
+	totalRemaining := len(remaining)
+	for i := 0; i < totalRemaining; i++ {
+		if i%20 == 0 {
+			if ctx.Err() != nil {
+				return groups
+			}
+			if progressCb != nil && totalRemaining > 0 {
+				progressCb(float64(i) / float64(totalRemaining))
+			}
+		}
+
 		if assigned[remaining[i]] {
 			continue
 		}
 		group := []DuplicateEntry{{Path: remaining[i], Similarity: 1.0}}
 
-		for j := i + 1; j < len(remaining); j++ {
+		for j := i + 1; j < totalRemaining; j++ {
 			if assigned[remaining[j]] {
 				continue
 			}
@@ -183,6 +215,10 @@ func FindImageDuplicates(infos map[string]*ImageInfo, threshold float64) [][]Dup
 			assigned[remaining[i]] = true
 			groups = append(groups, group)
 		}
+	}
+
+	if progressCb != nil {
+		progressCb(1.0)
 	}
 
 	return groups

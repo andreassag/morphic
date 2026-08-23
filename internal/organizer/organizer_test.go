@@ -1,6 +1,7 @@
 package organizer_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,7 +94,6 @@ func TestRenderName_datetimeToken(t *testing.T) {
 	os.WriteFile(f, []byte{}, 0o644)
 
 	name := organizer.RenderName("{datetime}", f, 1)
-	// datetime token → YYYYMMDD_HHMMSS.jpg  (15 chars before ext)
 	base := strings.TrimSuffix(name, ".jpg")
 	if len(base) != 15 {
 		t.Errorf("expected 15-char datetime (YYYYMMDD_HHMMSS), got %q (%d chars)", base, len(base))
@@ -154,7 +154,7 @@ func TestExecuteSort_copy(t *testing.T) {
 
 	dest := filepath.Join(tmp, "out")
 	plan := organizer.PlanSort([]string{src}, "{year}/{month}", dest)
-	organizer.ExecuteSort(plan, "copy")
+	organizer.ExecuteSort(context.Background(), plan, "copy")
 
 	for _, e := range plan {
 		if e.Status == "error" {
@@ -173,7 +173,6 @@ func TestExecuteSort_copy(t *testing.T) {
 func TestExecuteSort_move(t *testing.T) {
 	src := tempCopy(t, filepath.Join(assetsDir(t), "sample1.jpg"))
 	if _, err := os.Stat(filepath.Join(assetsDir(t), "sample1.jpg")); os.IsNotExist(err) {
-		// Create a minimal JPEG if assets not present
 		src2 := filepath.Join(filepath.Dir(src), "dummy.jpg")
 		os.WriteFile(src2, []byte{0xFF, 0xD8, 0xFF}, 0o644)
 		src = src2
@@ -181,7 +180,7 @@ func TestExecuteSort_move(t *testing.T) {
 
 	dest := filepath.Join(filepath.Dir(src), "moved")
 	plan := organizer.PlanSort([]string{src}, "{year}/{month}", dest)
-	organizer.ExecuteSort(plan, "move")
+	organizer.ExecuteSort(context.Background(), plan, "move")
 
 	for _, e := range plan {
 		if e.Status == "error" {
@@ -221,17 +220,14 @@ func TestPlanRename_noConflicts(t *testing.T) {
 
 func TestPlanRename_conflictDetected(t *testing.T) {
 	tmp := t.TempDir()
-	// Two files that will produce the same renamed output: same template, same seq
 	f1 := filepath.Join(tmp, "a.jpg")
 	f2 := filepath.Join(tmp, "b.jpg")
 	os.WriteFile(f1, []byte{}, 0o644)
 	os.WriteFile(f2, []byte{}, 0o644)
-	// Force same timestamp on both
 	now := time.Now()
 	os.Chtimes(f1, now, now)
 	os.Chtimes(f2, now, now)
 
-	// Use a static name with no seq: both will map to the same destination
 	plan := organizer.PlanRename([]string{f1, f2}, "samename", "move", 1)
 	conflicts := 0
 	for _, e := range plan {

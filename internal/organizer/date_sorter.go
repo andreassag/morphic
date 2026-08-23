@@ -1,8 +1,10 @@
 package organizer
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,9 +95,13 @@ func PlanSort(files []string, template string, destination string) []SortPlanEnt
 	return plan
 }
 
-// ExecuteSort executes the sort plan using the given operation (move or copy).
-func ExecuteSort(plan []SortPlanEntry, operation string) {
+// ExecuteSort executes the sort plan using the given operation (move or copy) with context cancellation.
+func ExecuteSort(ctx context.Context, plan []SortPlanEntry, operation string) {
 	for i := range plan {
+		if ctx.Err() != nil {
+			return
+		}
+
 		destDir := filepath.Dir(plan[i].Destination)
 		if err := os.MkdirAll(destDir, 0o755); err != nil {
 			plan[i].Status = "error"
@@ -111,7 +117,9 @@ func ExecuteSort(plan []SortPlanEntry, operation string) {
 				// Cross-device move: copy + remove
 				err = copyFile(plan[i].Source, plan[i].Destination)
 				if err == nil {
-					os.Remove(plan[i].Source)
+					if rmErr := os.Remove(plan[i].Source); rmErr != nil {
+						slog.Warn("organizer: failed to remove source after cross-device copy", "src", plan[i].Source, "err", rmErr)
+					}
 				}
 			}
 		case "copy":
@@ -149,7 +157,10 @@ func copyFile(src, dst string) error {
 	// Preserve modification time
 	info, err := os.Stat(src)
 	if err == nil {
-		os.Chtimes(dst, info.ModTime(), info.ModTime())
+		if err := os.Chtimes(dst, info.ModTime(), info.ModTime()); err != nil {
+			// Intentionally log and continue if mtime update fails
+			slog.Debug("organizer: chtimes failed", "dst", dst, "err", err)
+		}
 	}
 
 	return out.Close()

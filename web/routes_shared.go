@@ -2,7 +2,6 @@ package web
 
 import (
 	"math"
-	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -27,22 +26,30 @@ func registerSharedRoutes(r *gin.Engine) {
 func handleBrowseDirectory(c *gin.Context) {
 	path := c.Query("path")
 	if path == "" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = "."
+		}
 		path = home
 	}
 
 	path = filepath.Clean(path)
 	if !isAbsPath(path) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
+		respondError(c, http.StatusBadRequest, "INVALID_PATH", "Invalid path")
 		return
 	}
 	info, err := os.Stat(path)
 	if err != nil || !info.IsDir() {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Not a directory"})
+		respondError(c, http.StatusBadRequest, "NOT_A_DIRECTORY", "Not a directory")
 		return
 	}
 
-	entries, _ := os.ReadDir(path)
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "READ_DIR_FAILED", err.Error())
+		return
+	}
+
 	type dirEntry struct {
 		Name string `json:"name"`
 		Path string `json:"path"`
@@ -80,9 +87,9 @@ func handleBrowseDirectory(c *gin.Context) {
 
 // handleBrowseNative opens the OS-native folder picker dialog.
 func handleBrowseNative(c *gin.Context) {
-	folder, available, err := shared.OpenNativeFolderDialog()
+	folder, available, err := shared.OpenNativeFolderDialog(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "NATIVE_DIALOG_ERROR", err.Error())
 		return
 	}
 	if !available {
@@ -119,14 +126,14 @@ func handleThumbnail(c *gin.Context) {
 		return
 	}
 
-	if shared.IsVideoFile(path) {
-		data, err = shared.GenerateVideoThumbnail(path, shared.DefaultThumbnailSize)
+	if shared.IsVideo(path) {
+		data, err = shared.GenerateVideoThumbnail(c.Request.Context(), path, shared.DefaultThumbnailSize)
 	} else {
-		data, err = shared.GenerateImageThumbnail(path, shared.DefaultThumbnailSize)
+		data, err = shared.GenerateImageThumbnail(c.Request.Context(), path, shared.DefaultThumbnailSize)
 	}
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "thumbnail generation failed", "detail": err.Error()})
+		respondError(c, http.StatusInternalServerError, "THUMBNAIL_FAILED", err.Error())
 		return
 	}
 
@@ -141,10 +148,12 @@ func handleSystemInfo(c *gin.Context) {
 		"nvenc_available": false,
 	}
 
-	if _, err := exec.LookPath("ffmpeg"); err == nil {
+	candidates := shared.FFmpegCandidates()
+	if len(candidates) > 0 {
+		bin := candidates[0]
 		ffmpegInfo["installed"] = true
 
-		if out, err := exec.Command("ffmpeg", "-hide_banner", "-encoders").
+		if out, err := exec.CommandContext(c.Request.Context(), bin, "-hide_banner", "-encoders").
 			CombinedOutput(); err == nil {
 			var encoders []string
 			for _, line := range strings.Split(string(out), "\n") {
@@ -200,10 +209,6 @@ func handleMedia(c *gin.Context) {
 		return
 	}
 
-	contentType := mime.TypeByExtension(filepath.Ext(filePath))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
 	c.File(filePath)
 }
 
@@ -214,7 +219,6 @@ func isDir(path string) bool {
 }
 
 // isAbsPath rejects relative paths and paths containing null bytes.
-// It does not enforce any allowlisted root directory.
 func isAbsPath(p string) bool {
 	return filepath.IsAbs(p) && !strings.Contains(p, "\x00")
 }

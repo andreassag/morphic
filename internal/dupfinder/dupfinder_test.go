@@ -27,7 +27,7 @@ func TestComputeImageHashes_jpg(t *testing.T) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Skip("sample1.jpg not present")
 	}
-	info := dupfinder.ComputeImageHashes(path)
+	info := dupfinder.ComputeImageHashes(context.Background(), path)
 	if !info.HasHash {
 		t.Error("expected HasHash=true for a valid JPEG")
 	}
@@ -44,14 +44,14 @@ func TestComputeImageHashes_png(t *testing.T) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Skip("sample2.png not present")
 	}
-	info := dupfinder.ComputeImageHashes(path)
+	info := dupfinder.ComputeImageHashes(context.Background(), path)
 	if !info.HasHash {
 		t.Error("expected HasHash=true for a valid PNG")
 	}
 }
 
 func TestComputeImageHashes_nonexistent(t *testing.T) {
-	info := dupfinder.ComputeImageHashes("/nonexistent/file.jpg")
+	info := dupfinder.ComputeImageHashes(context.Background(), "/nonexistent/file.jpg")
 	if info.HasHash {
 		t.Error("expected HasHash=false for a missing file")
 	}
@@ -65,8 +65,8 @@ func TestComputeImageHashes_sameFileSameHash(t *testing.T) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Skip("sample1.jpg not present")
 	}
-	a := dupfinder.ComputeImageHashes(path)
-	b := dupfinder.ComputeImageHashes(path)
+	a := dupfinder.ComputeImageHashes(context.Background(), path)
+	b := dupfinder.ComputeImageHashes(context.Background(), path)
 	if a.PHash != b.PHash || a.AHash != b.AHash || a.DHash != b.DHash {
 		t.Error("same file produced different hashes on two reads")
 	}
@@ -79,7 +79,7 @@ func TestComputeSimilarity_identicalImage(t *testing.T) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Skip("sample1.jpg not present")
 	}
-	info := dupfinder.ComputeImageHashes(path)
+	info := dupfinder.ComputeImageHashes(context.Background(), path)
 	sim := dupfinder.ComputeSimilarity(&info, &info)
 	if sim < 0.999 {
 		t.Errorf("self-similarity expected ≈1.0, got %f", sim)
@@ -88,7 +88,6 @@ func TestComputeSimilarity_identicalImage(t *testing.T) {
 
 func TestComputeSimilarity_differentImages(t *testing.T) {
 	dir := assetsDir(t)
-	// Use visually distinct images: smooth gradient vs high-frequency checkerboard
 	pathA := filepath.Join(dir, "gradient.png")
 	pathB := filepath.Join(dir, "checkerboard.png")
 	if _, e := os.Stat(pathA); os.IsNotExist(e) {
@@ -97,9 +96,8 @@ func TestComputeSimilarity_differentImages(t *testing.T) {
 	if _, e := os.Stat(pathB); os.IsNotExist(e) {
 		t.Skip("checkerboard.png not present")
 	}
-	a := dupfinder.ComputeImageHashes(pathA)
-	b := dupfinder.ComputeImageHashes(pathB)
-	// Different images should be less than 99% similar
+	a := dupfinder.ComputeImageHashes(context.Background(), pathA)
+	b := dupfinder.ComputeImageHashes(context.Background(), pathB)
 	sim := dupfinder.ComputeSimilarity(&a, &b)
 	if sim > 0.99 {
 		t.Errorf("distinct images have unexpectedly high similarity: %f", sim)
@@ -114,7 +112,6 @@ func TestProcessImages_basic(t *testing.T) {
 		{Path: filepath.Join(dir, "sample1.jpg"), Ext: ".jpg"},
 		{Path: filepath.Join(dir, "sample2.png"), Ext: ".png"},
 	}
-	// Filter to only existing files
 	var existing []shared.FileInfo
 	for _, f := range files {
 		if _, err := os.Stat(f.Path); err == nil {
@@ -125,7 +122,7 @@ func TestProcessImages_basic(t *testing.T) {
 		t.Skip("no test images available")
 	}
 
-	result := dupfinder.ProcessImages(context.Background(), existing, 2)
+	result := dupfinder.ProcessImages(context.Background(), existing, 2, nil)
 	if len(result) == 0 {
 		t.Error("ProcessImages returned empty result for valid images")
 	}
@@ -146,9 +143,8 @@ func TestProcessImages_cancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	result := dupfinder.ProcessImages(ctx, files, 2)
-	// With cancelled context, we should get 0 results (cancelled before first work)
-	_ = result // either 0 or partial — just must not panic
+	result := dupfinder.ProcessImages(ctx, files, 2, nil)
+	_ = result // partial/empty results expected
 }
 
 // ── FindImageDuplicates ─────────────────────────────────────────────────────
@@ -159,13 +155,12 @@ func TestFindImageDuplicates_exactDuplicate(t *testing.T) {
 		t.Skip("sample1.jpg not present")
 	}
 
-	info := dupfinder.ComputeImageHashes(path)
-	// Register the same image under two different paths
+	info := dupfinder.ComputeImageHashes(context.Background(), path)
 	infos := map[string]*dupfinder.ImageInfo{
 		"/fake/a.jpg": &info,
 		"/fake/b.jpg": &info,
 	}
-	groups := dupfinder.FindImageDuplicates(infos, 0.9)
+	groups := dupfinder.FindImageDuplicates(context.Background(), infos, 0.9, nil)
 	if len(groups) == 0 {
 		t.Error("expected at least one duplicate group for identical hashes")
 	}
@@ -173,7 +168,6 @@ func TestFindImageDuplicates_exactDuplicate(t *testing.T) {
 
 func TestFindImageDuplicates_noFalsePositives(t *testing.T) {
 	dir := assetsDir(t)
-	// Use visually distinct images: smooth gradient vs high-frequency checkerboard
 	pathA := filepath.Join(dir, "gradient.png")
 	pathB := filepath.Join(dir, "checkerboard.png")
 	if _, e := os.Stat(pathA); os.IsNotExist(e) {
@@ -183,14 +177,13 @@ func TestFindImageDuplicates_noFalsePositives(t *testing.T) {
 		t.Skip("checkerboard.png not present")
 	}
 
-	infoA := dupfinder.ComputeImageHashes(pathA)
-	infoB := dupfinder.ComputeImageHashes(pathB)
+	infoA := dupfinder.ComputeImageHashes(context.Background(), pathA)
+	infoB := dupfinder.ComputeImageHashes(context.Background(), pathB)
 	infos := map[string]*dupfinder.ImageInfo{
 		pathA: &infoA,
 		pathB: &infoB,
 	}
-	// High threshold — visually dissimilar images must not be grouped
-	groups := dupfinder.FindImageDuplicates(infos, 0.99)
+	groups := dupfinder.FindImageDuplicates(context.Background(), infos, 0.99, nil)
 	for _, g := range groups {
 		if len(g) > 1 {
 			t.Errorf("distinct images grouped as duplicates at threshold 0.99: %v", g)
@@ -202,7 +195,7 @@ func TestFindImageDuplicates_noFalsePositives(t *testing.T) {
 
 func TestStartJob_createsJob(t *testing.T) {
 	dir := assetsDir(t)
-	id := dupfinder.StartJob(dir, "images", 0.9, 0.85)
+	id := dupfinder.StartJob(context.Background(), dir, "images", 0.9, 0.85)
 	if id == "" {
 		t.Fatal("StartJob returned empty job ID")
 	}

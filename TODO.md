@@ -3,11 +3,12 @@
 ## Bugs
 
 - When converting video files, the screen start to flicker, especially the tumbnails, and parts of the screen becomes less interactive.
-- The "browse" button still doesn't work as intended.
+- The "browse" button still doesn't work as intended. Should open the file explorer in Windows/WSL, finder on Mac, etc.
 - When the progressbar is present, the lower part of the window is below the visible screen. Should automatically adjust the spacing or allow me to scroll further down.
 - Improve dynamic scalability on smaller screens
 - When using dupfinder, show the same "similarity" score between both/all images/videos of the same duplicate group
 - "STOP" button doesn't work as intended in DupFinder and Organizer tab.
+- When searching a large space for duplicates, the search stops before it finishes. Implement any strategy to continue searching until all files are searched regarless of the number/size of the files.
 
 ## Features
 

@@ -1,6 +1,7 @@
 package converter
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,10 +12,10 @@ import (
 
 // ScanResult holds the output of a folder scan.
 type ScanResult struct {
-	Folder  string            `json:"folder"`
-	Summary map[string]int    `json:"summary"`
-	Files   []FileEntry       `json:"files"`
-	Total   int               `json:"total"`
+	Folder  string         `json:"folder"`
+	Summary map[string]int `json:"summary"`
+	Files   []FileEntry    `json:"files"`
+	Total   int            `json:"total"`
 }
 
 // FileEntry describes one file found during scanning.
@@ -45,9 +46,9 @@ func ScanFolder(folder string, includeSubfolders bool, filterType string) (*Scan
 	var files []FileEntry
 
 	if includeSubfolders {
-		filepath.WalkDir(folder, func(path string, d os.DirEntry, err error) error {
+		err := filepath.WalkDir(folder, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
-				return nil
+				return nil // Skip unreadable entries
 			}
 			if d.IsDir() {
 				name := strings.ToLower(d.Name())
@@ -59,10 +60,13 @@ func ScanFolder(folder string, includeSubfolders bool, filterType string) (*Scan
 			addFileEntry(path, d, allowed, summary, &files)
 			return nil
 		})
+		if err != nil {
+			return nil, fmt.Errorf("walking folder %s: %w", folder, err)
+		}
 	} else {
 		entries, err := os.ReadDir(folder)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reading directory %s: %w", folder, err)
 		}
 		for _, d := range entries {
 			if d.IsDir() {
@@ -73,21 +77,6 @@ func ScanFolder(folder string, includeSubfolders bool, filterType string) (*Scan
 		}
 	}
 
-	// Sort summary by count descending
-	type kv struct {
-		K string
-		V int
-	}
-	var sorted []kv
-	for k, v := range summary {
-		sorted = append(sorted, kv{k, v})
-	}
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].V > sorted[j].V })
-	sortedSummary := make(map[string]int, len(sorted))
-	for _, s := range sorted {
-		sortedSummary[s.K] = s.V
-	}
-
 	// Sort files by name
 	sort.Slice(files, func(i, j int) bool {
 		return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name)
@@ -95,14 +84,14 @@ func ScanFolder(folder string, includeSubfolders bool, filterType string) (*Scan
 
 	return &ScanResult{
 		Folder:  folder,
-		Summary: sortedSummary,
+		Summary: summary,
 		Files:   files,
 		Total:   len(files),
 	}, nil
 }
 
 func addFileEntry(path string, d os.DirEntry, allowed map[string]struct{}, summary map[string]int, files *[]FileEntry) {
-	ext := shared.NormaliseExt(strings.ToLower(filepath.Ext(path)))
+	ext := shared.NormaliseExt(filepath.Ext(path))
 	if _, ok := allowed[ext]; !ok {
 		return
 	}

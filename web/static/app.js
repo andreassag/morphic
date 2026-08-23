@@ -216,9 +216,37 @@ function observeThumbnails(container) {
     images.forEach(img => lazyThumbnailObserver.observe(img));
 }
 
+// ── SSE Stream Helper ────────────────────────────────────────────────
+function connectJobSSE(url, callbacks = {}) {
+    const es = new EventSource(url);
+    es.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            if (callbacks.onMessage) callbacks.onMessage(data);
+            if (data.status === 'done') {
+                es.close();
+                if (callbacks.onDone) callbacks.onDone(data);
+            } else if (data.status === 'cancelled') {
+                es.close();
+                if (callbacks.onCancelled) callbacks.onCancelled(data);
+            } else if (data.status === 'failed' || data.phase === 'error') {
+                es.close();
+                if (callbacks.onFailed) callbacks.onFailed(data);
+            }
+        } catch (e) {
+            console.error('SSE parse error:', e);
+        }
+    };
+    es.onerror = (err) => {
+        if (callbacks.onError) callbacks.onError(err);
+    };
+    return es;
+}
+
 // Dupfinder state
 let dupJobId = null;
 let dupPollTimer = null;
+let dupEventSource = null;
 let dupAllGroups = [];
 let dupSelectedFiles = new Set();
 let dupRunning = false;
@@ -226,10 +254,12 @@ let dupRunning = false;
 // Organizer state
 let orgJobId = null;
 let orgPollTimer = null;
+let orgEventSource = null;
 let orgRunning = false;
 
 // Converter convert state
 let convConvertJobId = null;
+let convEventSource = null;
 
 // =====================================================================
 // Tabs
@@ -804,7 +834,7 @@ async function convConvertBatch() {
             if (data.job_id) {
                 convConvertJobId = data.job_id;
                 convShowProgress();
-                await convPollProgress(data.job_id);
+                await convStreamProgress(data.job_id);
             }
         }
 
@@ -826,7 +856,7 @@ async function convConvertBatch() {
                 if (data.job_id) {
                     convConvertJobId = data.job_id;
                     convShowProgress();
-                    await convPollProgress(data.job_id);
+                    await convStreamProgress(data.job_id);
                 }
             }
         }
@@ -839,47 +869,57 @@ async function convConvertBatch() {
 
 function convShowProgress() {
     const stopBtn = document.getElementById('convStopBtn');
-    if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = '\u23f9 Stop'; }
-    document.getElementById('convProgress').classList.add('active');
+    if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = '⏹ Stop'; }
+    const p = document.getElementById('convProgress');
+    p.classList.add('active');
+    p.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-function convPollProgress(jobId) {
+function convStreamProgress(jobId) {
     return new Promise(resolve => {
-        let lastCompleted = -1;
-        convPollTimer = setInterval(async () => {
-            try {
-                const resp = await fetch(`/api/converter/progress/${jobId}/poll?last=${lastCompleted}`);
-                const data = await resp.json();
-                if (data.error) return;
+        if (convEventSource) {
+            convEventSource.close();
+            convEventSource = null;
+        }
 
-                lastCompleted = data.completed;
+        convEventSource = connectJobSSE(`/api/converter/progress/${jobId}/stream`, {
+            onMessage: (data) => {
                 const pct = data.total > 0 ? Math.round((data.completed / data.total) * 100) : 0;
                 document.getElementById('convProgressBar').style.width = pct + '%';
                 document.getElementById('convProgressPct').textContent = pct + '%';
                 document.getElementById('convProgressMsg').textContent =
-                    data.current_file ? `Converting: ${data.current_file}` : 'Processing...';
-
+                    data.current_file ? `Converting: ${data.current_file}` : (data.status === 'done' ? 'Completed' : 'Processing...');
                 _convSyncResults(data);
-
-                if (data.status === 'done') {
-                    clearInterval(convPollTimer);
-                    document.getElementById('convProgress').classList.remove('active');
-                    convConvertJobId = null;
-                    resolve('done');
-                } else if (data.status === 'cancelled') {
-                    clearInterval(convPollTimer);
-                    document.getElementById('convProgress').classList.remove('active');
-                    convConvertJobId = null;
-                    showToast('Conversion was stopped', 'warning');
-                    resolve('cancelled');
-                }
-            } catch (e) { /* retry */ }
-        }, 500);
+            },
+            onDone: () => {
+                document.getElementById('convProgress').classList.remove('active');
+                convConvertJobId = null;
+                convEventSource = null;
+                resolve('done');
+            },
+            onCancelled: () => {
+                document.getElementById('convProgress').classList.remove('active');
+                convConvertJobId = null;
+                convEventSource = null;
+                showToast('Conversion was stopped', 'warning');
+                resolve('cancelled');
+            },
+            onFailed: (data) => {
+                document.getElementById('convProgress').classList.remove('active');
+                convConvertJobId = null;
+                convEventSource = null;
+                showToast('Conversion failed: ' + (data.error || 'Unknown error'), 'error');
+                resolve('failed');
+            },
+            onError: () => {
+                // Keep resolving on fallback or close
+            }
+        });
     });
 }
 
-// Sync convFileResults from a job poll/progress response and re-render the table.
 function _convSyncResults(data) {
+    const table = document.getElementById('convResultsTable');
     for (const r of data.results || []) {
         const existing = convFileResults.get(r.source);
         if (existing && existing.status !== 'converting') continue; // already finalised
@@ -894,51 +934,66 @@ function _convSyncResults(data) {
         } else {
             convFileResults.set(r.source, { status: 'error', error: r.error || 'unknown' });
         }
+        if (table) updateConvTableRow(table, r.source);
     }
-    // Keep at most one 'converting' marker (the current file)
-    for (const [path, res] of convFileResults) {
-        if (res.status === 'converting') convFileResults.delete(path);
+
+    if (data.current_file) {
+        if (!convFileResults.has(data.current_file) || convFileResults.get(data.current_file)?.status === 'converting') {
+            convFileResults.set(data.current_file, { status: 'converting' });
+            if (table) updateConvTableRow(table, data.current_file);
+        }
     }
-    if (data.current_file && !convFileResults.has(data.current_file)) {
-        convFileResults.set(data.current_file, { status: 'converting' });
+}
+
+function updateConvTableRow(table, filePath) {
+    if (!table) return;
+    const row = table.querySelector(`tr[data-path="${escapeAttr(filePath)}"]`);
+    if (!row) return;
+
+    const result = convFileResults.get(filePath);
+    const resultCell = row.children[4];
+    if (!resultCell) return;
+
+    if (!result) {
+        resultCell.innerHTML = '';
+        row.classList.remove('failed-file');
+        return;
     }
-    renderConvResults();
+
+    if (result.status === 'converting') {
+        resultCell.innerHTML = '<span class="conv-result"><span class="result-converting">Converting…</span></span>';
+        row.classList.remove('failed-file');
+    } else if (result.status === 'ok') {
+        const pct = result.original_size > 0
+            ? Math.round((1 - result.new_size / result.original_size) * 100) : 0;
+        const sign = pct >= 0 ? '−' : '+';
+        resultCell.innerHTML = `<span class="conv-result"><span class="status-ok">✓</span> <span class="size-change">${result.original_size_fmt} → ${result.new_size_fmt} (${sign}${Math.abs(pct)}%)</span></span>`;
+        row.classList.remove('failed-file');
+    } else if (result.status === 'error') {
+        const short = escapeHtml((result.error || 'unknown').slice(0, 80));
+        resultCell.innerHTML = `<span class="conv-result"><span class="status-err" title="${escapeAttr(result.error || '')}">✗ ${short}</span></span>`;
+        row.classList.add('failed-file');
+    }
 }
 
 async function convStopConvert() {
     if (!convConvertJobId) return;
     const btn = document.getElementById('convStopBtn');
-    btn.disabled = true;
-    btn.textContent = 'Stopping…';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Stopping…';
+    }
     try {
         await fetch(`/api/converter/progress/${convConvertJobId}/cancel`, { method: 'POST' });
     } catch (e) { /* ignore */ }
-    // Poll loop will detect 'cancelled'
+    if (convEventSource) {
+        convEventSource.close();
+        convEventSource = null;
+    }
 }
 
 async function convWaitForJob(jobId) {
-    // Simple wait for single-file conversions
-    while (true) {
-        const resp = await fetch(`/api/converter/progress/${jobId}`);
-        const data = await resp.json();
-        if (data.status === 'done') {
-            const r = data.results[0];
-            if (r.status === 'ok') {
-                convFileResults.set(r.source, {
-                    status: 'ok',
-                    original_size_fmt: r.original_size_fmt,
-                    new_size_fmt: r.new_size_fmt,
-                    original_size: r.original_size,
-                    new_size: r.new_size,
-                });
-            } else {
-                convFileResults.set(r.source, { status: 'error', error: r.error || 'unknown' });
-            }
-            renderConvResults();
-            return;
-        }
-        await sleep(300);
-    }
+    await convStreamProgress(jobId);
 }
 
 async function convRetrySingle(filePath, btnEl) {
@@ -1080,7 +1135,9 @@ async function dupStartScan() {
 
     dupSetStopMode();
     document.getElementById('dupResults').classList.remove('active');
-    document.getElementById('dupProgress').classList.add('active');
+    const p = document.getElementById('dupProgress');
+    p.classList.add('active');
+    p.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     document.getElementById('dupProgressBar').style.width = '0%';
     document.getElementById('dupProgressPct').textContent = '0%';
     document.getElementById('dupProgressMsg').textContent = 'Starting scan...';
@@ -1102,7 +1159,7 @@ async function dupStartScan() {
             return;
         }
         dupJobId = data.job_id;
-        dupPollProgress();
+        dupStreamProgress(dupJobId);
     } catch (e) {
         showToast('Scan failed: ' + e.message, 'error');
         dupRestoreBtn();
@@ -1112,12 +1169,18 @@ async function dupStartScan() {
 async function dupStopScan() {
     if (!dupJobId) { dupRestoreBtn(); return; }
     const btn = document.getElementById('dupScanBtn');
-    btn.disabled = true;
-    btn.textContent = 'Stopping…';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Stopping…';
+    }
     try {
         await fetch(`/api/dupfinder/scan/${dupJobId}/cancel`, { method: 'POST' });
     } catch (e) { /* ignore */ }
-    // Poll loop will detect 'cancelled' and call dupRestoreBtn
+    if (dupEventSource) {
+        dupEventSource.close();
+        dupEventSource = null;
+    }
+    dupRestoreBtn();
 }
 
 function dupSetStopMode() {
@@ -1133,10 +1196,12 @@ function dupRestoreBtn() {
     dupRunning = false;
     dupJobId = null;
     const btn = document.getElementById('dupScanBtn');
-    btn.disabled = false;
-    btn.textContent = '🔍 Start Scan';
-    btn.classList.remove('btn-stop');
-    btn.classList.add('btn-primary');
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = '🔍 Start Scan';
+        btn.classList.remove('btn-stop');
+        btn.classList.add('btn-primary');
+    }
 }
 
 function dupShowInterrupted() {
@@ -1148,35 +1213,37 @@ function dupShowInterrupted() {
         '<div class="scan-interrupted">⏹ Scan was interrupted — no results to display.</div>';
 }
 
-function dupPollProgress() {
-    if (!dupJobId) return;
-    dupPollTimer = setInterval(async () => {
-        try {
-            const resp = await fetch(`/api/dupfinder/scan/${dupJobId}/status`);
-            const data = await resp.json();
+function dupStreamProgress(jobId) {
+    if (dupEventSource) {
+        dupEventSource.close();
+        dupEventSource = null;
+    }
 
-            const pct = Math.round(data.progress * 100);
+    dupEventSource = connectJobSSE(`/api/dupfinder/scan/${jobId}/stream`, {
+        onMessage: (data) => {
+            const pct = Math.round((data.progress || 0) * 100);
             document.getElementById('dupProgressBar').style.width = pct + '%';
             document.getElementById('dupProgressPct').textContent = pct + '%';
             document.getElementById('dupProgressMsg').textContent = data.message || '';
             document.getElementById('dupProgressElapsed').textContent = formatDuration(data.elapsed_seconds || 0);
-
-            if (data.status === 'done') {
-                clearInterval(dupPollTimer);
-                await dupLoadResults();
-            } else if (data.status === 'cancelled') {
-                clearInterval(dupPollTimer);
-                document.getElementById('dupProgress').classList.remove('active');
-                dupShowInterrupted();
-                dupRestoreBtn();
-            } else if (data.status === 'failed') {
-                clearInterval(dupPollTimer);
-                showToast('Scan failed: ' + (data.error || 'Unknown'), 'error');
-                document.getElementById('dupProgress').classList.remove('active');
-                dupRestoreBtn();
-            }
-        } catch (e) { /* retry */ }
-    }, 500);
+        },
+        onDone: async () => {
+            dupEventSource = null;
+            await dupLoadResults();
+        },
+        onCancelled: () => {
+            dupEventSource = null;
+            document.getElementById('dupProgress').classList.remove('active');
+            dupShowInterrupted();
+            dupRestoreBtn();
+        },
+        onFailed: (data) => {
+            dupEventSource = null;
+            showToast('Scan failed: ' + (data.error || 'Unknown error'), 'error');
+            document.getElementById('dupProgress').classList.remove('active');
+            dupRestoreBtn();
+        }
+    });
 }
 
 async function dupLoadResults() {
@@ -1268,8 +1335,11 @@ function dupCreateFileCard(item, isBest) {
     }
 
     const badges = [];
-    if (isBest) badges.push(`<span class="best-badge">★ BEST</span>`);
-    badges.push(`<span class="sim-badge">${item.similarity}%</span>`);
+    if (isBest) {
+        badges.push(`<span class="best-badge">★ BEST</span>`);
+    } else {
+        badges.push(`<span class="sim-badge">${item.similarity}%</span>`);
+    }
 
     const meta = [];
     meta.push(item.resolution);
@@ -1501,7 +1571,9 @@ async function orgStartPlan() {
     document.getElementById('orgExecBtn').style.display = 'none';
     document.getElementById('orgPlanResults').style.display = 'none';
     document.getElementById('orgExecResults').style.display = 'none';
-    document.getElementById('orgProgress').style.display = 'block';
+    const p = document.getElementById('orgProgress');
+    p.style.display = 'block';
+    p.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     document.getElementById('orgProgressBar').style.width = '0%';
     document.getElementById('orgProgressMsg').textContent = 'Planning...';
 
@@ -1514,7 +1586,7 @@ async function orgStartPlan() {
         const data = await resp.json();
         if (data.error) { showToast(data.error, 'error'); orgRestoreBtn(); return; }
         orgJobId = data.job_id;
-        orgPollTimer = setInterval(orgPollStatus, 600);
+        orgStreamStatus(orgJobId);
     } catch (e) {
         showToast('Plan failed: ' + e.message, 'error');
         document.getElementById('orgProgress').style.display = 'none';
@@ -1525,12 +1597,18 @@ async function orgStartPlan() {
 async function orgStopScan() {
     if (!orgJobId) { orgRestoreBtn(); return; }
     const btn = document.getElementById('orgPlanBtn');
-    btn.disabled = true;
-    btn.textContent = 'Stopping…';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Stopping…';
+    }
     try {
         await fetch(`/api/organizer/cancel/${orgJobId}`, { method: 'POST' });
     } catch (e) { /* ignore */ }
-    // Poll loop will detect 'cancelled' and call orgRestoreBtn
+    if (orgEventSource) {
+        orgEventSource.close();
+        orgEventSource = null;
+    }
+    orgRestoreBtn();
 }
 
 function orgSetStopMode() {
@@ -1545,10 +1623,12 @@ function orgSetStopMode() {
 function orgRestoreBtn() {
     orgRunning = false;
     const btn = document.getElementById('orgPlanBtn');
-    btn.disabled = false;
-    btn.textContent = '📋 Preview Plan';
-    btn.classList.remove('btn-stop');
-    btn.classList.add('btn-primary');
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = '📋 Preview Plan';
+        btn.classList.remove('btn-stop');
+        btn.classList.add('btn-primary');
+    }
 }
 
 function orgShowInterrupted() {
@@ -1558,43 +1638,48 @@ function orgShowInterrupted() {
     document.getElementById('orgExecBtn').style.display = 'none';
 }
 
-async function orgPollStatus() {
-    try {
-        const resp = await fetch(`/api/organizer/status/${orgJobId}`);
-        const data = await resp.json();
+function orgStreamStatus(jobId) {
+    if (orgEventSource) {
+        orgEventSource.close();
+        orgEventSource = null;
+    }
 
-        const pct = Math.round((data.progress || 0) * 100);
-        document.getElementById('orgProgressBar').style.width = pct + '%';
-        document.getElementById('orgProgressPct').textContent = pct + '%';
+    orgEventSource = connectJobSSE(`/api/organizer/status/${jobId}/stream`, {
+        onMessage: (data) => {
+            const pct = Math.round((data.progress || 0) * 100);
+            document.getElementById('orgProgressBar').style.width = pct + '%';
+            document.getElementById('orgProgressPct').textContent = pct + '%';
+            document.getElementById('orgProgressMsg').textContent =
+                data.phase === 'executing' ? `Executing...` : `Planning...`;
 
-        if (data.status === 'cancelled') {
-            clearInterval(orgPollTimer);
+            if (data.phase === 'planned') {
+                orgRestoreBtn();
+                orgRenderPlan(data);
+            }
+        },
+        onDone: (data) => {
+            orgEventSource = null;
+            document.getElementById('orgProgress').style.display = 'none';
+            if (data.phase === 'planned') {
+                orgRestoreBtn();
+                orgRenderPlan(data);
+            } else {
+                orgRenderExecResults(data);
+            }
+        },
+        onCancelled: () => {
+            orgEventSource = null;
             document.getElementById('orgProgress').style.display = 'none';
             orgShowInterrupted();
             orgRestoreBtn();
-        } else if (data.phase === 'planned') {
-            clearInterval(orgPollTimer);
+        },
+        onFailed: (data) => {
+            orgEventSource = null;
             document.getElementById('orgProgress').style.display = 'none';
+            showToast('Error: ' + (data.error || 'Unknown error'), 'error');
             orgRestoreBtn();
-            orgRenderPlan(data);
-        } else if (data.phase === 'done') {
-            clearInterval(orgPollTimer);
-            document.getElementById('orgProgress').style.display = 'none';
-            orgRenderExecResults(data);
-        } else if (data.phase === 'error' || data.status === 'failed') {
-            clearInterval(orgPollTimer);
-            document.getElementById('orgProgress').style.display = 'none';
-            showToast('Error: ' + (data.error || 'Unknown'), 'error');
-            orgRestoreBtn();
-        } else {
-            document.getElementById('orgProgressMsg').textContent =
-                data.phase === 'executing' ? `Executing...` : `Planning...`;
         }
-    } catch (e) {
-        clearInterval(orgPollTimer);
-        showToast('Poll error: ' + e.message, 'error');
-        orgRestoreBtn();
-    }
+    });
 }
 
 function orgRenderPlan(data) {
@@ -1627,7 +1712,9 @@ async function orgExecute() {
     if (!orgJobId) { showToast('No plan to execute', 'error'); return; }
 
     document.getElementById('orgExecBtn').disabled = true;
-    document.getElementById('orgProgress').style.display = 'block';
+    const p = document.getElementById('orgProgress');
+    p.style.display = 'block';
+    p.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     document.getElementById('orgProgressMsg').textContent = 'Executing...';
     document.getElementById('orgProgressBar').style.width = '0%';
 
@@ -1639,7 +1726,7 @@ async function orgExecute() {
         });
         const data = await resp.json();
         if (data.error) { showToast(data.error, 'error'); return; }
-        orgPollTimer = setInterval(orgPollStatus, 600);
+        orgStreamStatus(orgJobId);
     } catch (e) {
         showToast('Execute failed: ' + e.message, 'error');
         document.getElementById('orgProgress').style.display = 'none';

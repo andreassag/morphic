@@ -1,9 +1,12 @@
 package dupfinder
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"image"
+	_ "image/jpeg"
+	"log/slog"
 	"math/bits"
 	"os"
 	"os/exec"
@@ -11,9 +14,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/corona10/goimagehash"
-	"github.com/disintegration/imaging"
 	"github.com/exterex/morphic/internal/shared"
 )
 
@@ -31,8 +34,12 @@ type VideoInfo struct {
 }
 
 // ComputeVideoHashes extracts frames and computes perceptual hashes.
-func ComputeVideoHashes(path string, numFrames int) VideoInfo {
+func ComputeVideoHashes(ctx context.Context, path string, numFrames int) VideoInfo {
 	info := VideoInfo{Path: path}
+
+	if ctx.Err() != nil {
+		return info
+	}
 
 	st, err := os.Stat(path)
 	if err != nil {
@@ -40,16 +47,28 @@ func ComputeVideoHashes(path string, numFrames int) VideoInfo {
 	}
 	info.FileSize = st.Size()
 
+	candidates := shared.FFmpegCandidates()
+	if len(candidates) == 0 {
+		slog.Warn("dupfinder: ffmpeg not found in PATH")
+		return info
+	}
+	ffmpegBin := candidates[0]
+	probeBin := strings.Replace(ffmpegBin, "ffmpeg", "ffprobe", 1)
+
 	// Get video metadata via ffprobe
-	probeOut, err := exec.Command("ffprobe",
+	probeOut, err := exec.CommandContext(ctx, probeBin,
 		"-v", "error",
 		"-select_streams", "v:0",
 		"-show_entries", "stream=width,height,duration,r_frame_rate,nb_frames",
 		"-of", "csv=p=0",
-		path,
+		shared.PathForBin(probeBin, path),
 	).Output()
 	if err != nil {
-		log.Printf("dupfinder: ffprobe failed for %s: %v", path, err)
+		slog.Warn("dupfinder: ffprobe failed", "path", path, "err", err)
+		return info
+	}
+
+	if ctx.Err() != nil {
 		return info
 	}
 
@@ -78,16 +97,16 @@ func ComputeVideoHashes(path string, numFrames int) VideoInfo {
 		return info
 	}
 
-	// Extract frames at regular intervals using ffmpeg
-	frameHashes := extractAndHashFrames(path, info.Duration, numFrames)
+	// Extract frames at regular intervals using ffmpeg in-memory pipe
+	frameHashes := extractAndHashFrames(ctx, ffmpegBin, path, info.Duration, numFrames)
 	info.FrameHashes = frameHashes
 	info.HasHash = len(frameHashes) > 0
 
 	return info
 }
 
-// extractAndHashFrames extracts frames at intervals and hashes them.
-func extractAndHashFrames(path string, duration float64, numFrames int) []uint64 {
+// extractAndHashFrames extracts frames at intervals and hashes them in-memory without temp files.
+func extractAndHashFrames(ctx context.Context, bin, path string, duration float64, numFrames int) []uint64 {
 	startTime := duration * 0.05
 	endTime := duration * 0.95
 	if endTime <= startTime {
@@ -99,25 +118,31 @@ func extractAndHashFrames(path string, duration float64, numFrames int) []uint64
 	var hashes []uint64
 
 	for i := 0; i < numFrames; i++ {
-		ts := startTime + float64(i+1)*interval
-		frameFile := fmt.Sprintf("/tmp/morphic_frame_%d_%d.jpg", os.Getpid(), i)
+		if ctx.Err() != nil {
+			return hashes
+		}
 
-		cmd := exec.Command("ffmpeg", "-y",
+		ts := startTime + float64(i+1)*interval
+
+		cmd := exec.CommandContext(ctx, bin, "-y",
 			"-ss", fmt.Sprintf("%.3f", ts),
-			"-i", path,
+			"-i", shared.PathForBin(bin, path),
 			"-vframes", "1",
+			"-f", "image2pipe",
+			"-vcodec", "mjpeg",
 			"-q:v", "2",
-			frameFile,
+			"pipe:1",
 		)
-		cmd.Stdout = nil
+
+		var stdout bytes.Buffer
+		cmd.Stdout = &stdout
 		cmd.Stderr = nil
 
-		if err := cmd.Run(); err != nil {
+		if err := cmd.Run(); err != nil || stdout.Len() == 0 {
 			continue
 		}
 
-		img, err := imaging.Open(frameFile)
-		os.Remove(frameFile)
+		img, _, err := image.Decode(bytes.NewReader(stdout.Bytes()))
 		if err != nil {
 			continue
 		}
@@ -150,11 +175,14 @@ func parseFPS(s string) float64 {
 
 // ProcessVideos hashes all videos concurrently and returns successful results.
 // It stops accepting new work when ctx is cancelled.
-func ProcessVideos(ctx context.Context, files []shared.FileInfo, numFrames, numWorkers int) map[string]*VideoInfo {
+func ProcessVideos(ctx context.Context, files []shared.FileInfo, numFrames, numWorkers int, progressCb func(processed, total int)) map[string]*VideoInfo {
 	result := make(map[string]*VideoInfo)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, numWorkers)
+
+	total := len(files)
+	var processed int64
 
 	for _, f := range files {
 		select {
@@ -163,16 +191,23 @@ func ProcessVideos(ctx context.Context, files []shared.FileInfo, numFrames, numW
 			return result
 		default:
 		}
+
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(fi shared.FileInfo) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			info := ComputeVideoHashes(fi.Path, numFrames)
+
+			info := ComputeVideoHashes(ctx, fi.Path, numFrames)
 			if info.HasHash {
 				mu.Lock()
 				result[fi.Path] = &info
 				mu.Unlock()
+			}
+
+			count := atomic.AddInt64(&processed, 1)
+			if progressCb != nil {
+				progressCb(int(count), total)
 			}
 		}(f)
 	}
@@ -203,8 +238,8 @@ func ComputeVideoSimilarity(a, b *VideoInfo) float64 {
 	return total / float64(len(a.FrameHashes))
 }
 
-// FindVideoDuplicates finds groups of duplicate videos.
-func FindVideoDuplicates(infos map[string]*VideoInfo, threshold float64) [][]DuplicateEntry {
+// FindVideoDuplicates finds groups of duplicate videos with batching and cancellation support.
+func FindVideoDuplicates(ctx context.Context, infos map[string]*VideoInfo, threshold float64, progressCb func(float64)) [][]DuplicateEntry {
 	paths := make([]string, 0, len(infos))
 	for p := range infos {
 		paths = append(paths, p)
@@ -214,13 +249,23 @@ func FindVideoDuplicates(infos map[string]*VideoInfo, threshold float64) [][]Dup
 	assigned := make(map[string]bool)
 	var groups [][]DuplicateEntry
 
-	for i := 0; i < len(paths); i++ {
+	totalPaths := len(paths)
+	for i := 0; i < totalPaths; i++ {
+		if i%10 == 0 {
+			if ctx.Err() != nil {
+				return groups
+			}
+			if progressCb != nil && totalPaths > 0 {
+				progressCb(float64(i) / float64(totalPaths))
+			}
+		}
+
 		if assigned[paths[i]] {
 			continue
 		}
 		group := []DuplicateEntry{{Path: paths[i], Similarity: 1.0}}
 
-		for j := i + 1; j < len(paths); j++ {
+		for j := i + 1; j < totalPaths; j++ {
 			if assigned[paths[j]] {
 				continue
 			}
@@ -235,6 +280,10 @@ func FindVideoDuplicates(infos map[string]*VideoInfo, threshold float64) [][]Dup
 			assigned[paths[i]] = true
 			groups = append(groups, group)
 		}
+	}
+
+	if progressCb != nil {
+		progressCb(1.0)
 	}
 
 	return groups

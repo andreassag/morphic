@@ -1,11 +1,28 @@
 package organizer
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/exterex/morphic/internal/shared"
 )
+
+// UnifiedPlanEntry represents an organizer plan entry matching the API response.
+type UnifiedPlanEntry struct {
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	Conflict    bool   `json:"conflict,omitempty"`
+}
+
+// ExecutionResult represents execution statistics.
+type ExecutionResult struct {
+	Completed int `json:"completed"`
+	Errors    int `json:"errors"`
+	Skipped   int `json:"skipped"`
+}
 
 // ScanJob represents an organizer scan/plan/execute job.
 type ScanJob struct {
@@ -28,14 +45,15 @@ type ScanJob struct {
 
 var store = shared.NewJobStore[ScanJob]()
 
-func init() {
-	store.StartCleanup(30*time.Minute, func(j *ScanJob) time.Time {
+// StartCleanup starts the background cleanup goroutine for expired organizer jobs.
+func StartCleanup(ctx context.Context, ttl time.Duration) {
+	store.StartCleanup(ctx, ttl, func(j *ScanJob) time.Time {
 		return j.DoneAt
 	})
 }
 
 // StartPlanJob starts a new planning job.
-func StartPlanJob(folder, mode, template, destination, operation string, startSeq int) string {
+func StartPlanJob(parentCtx context.Context, folder, mode, template, destination, operation string, startSeq int) string {
 	job := &ScanJob{
 		Job:         shared.NewJob(),
 		Folder:      folder,
@@ -50,7 +68,10 @@ func StartPlanJob(folder, mode, template, destination, operation string, startSe
 
 	store.Set(job.ID, job)
 
-	go runPlan(job)
+	ctx, cancel := context.WithCancel(parentCtx)
+	store.RegisterCancel(job.ID, cancel)
+
+	go runPlan(ctx, job)
 
 	return job.ID
 }
@@ -60,8 +81,13 @@ func GetJob(id string) (*ScanJob, bool) {
 	return store.Get(id)
 }
 
+// CancelJob cancels a job by ID.
+func CancelJob(id string) bool {
+	return store.Cancel(id)
+}
+
 // ExecuteJob starts the execution phase of a planned job.
-func ExecuteJob(id string) bool {
+func ExecuteJob(parentCtx context.Context, id string) bool {
 	job, ok := store.Get(id)
 	if !ok || job.Phase != "planned" {
 		return false
@@ -73,14 +99,27 @@ func ExecuteJob(id string) bool {
 	job.Processed = 0
 	job.mu.Unlock()
 
-	go runExecute(job)
+	ctx, cancel := context.WithCancel(parentCtx)
+	store.RegisterCancel(job.ID, cancel)
+
+	go runExecute(ctx, job)
 	return true
 }
 
-func runPlan(job *ScanJob) {
-	files, err := shared.FindAllMediaFiles(job.Folder)
+func runPlan(ctx context.Context, job *ScanJob) {
+	defer func() {
+		if r := recover(); r != nil {
+			job.mu.Lock()
+			job.Status = shared.JobStatusFailed
+			job.Error = fmt.Sprintf("%v", r)
+			job.DoneAt = time.Now()
+			job.mu.Unlock()
+		}
+	}()
 
+	files, err := shared.FindAllMediaFiles(job.Folder)
 	if err != nil {
+		slog.Error("organizer: finding media files failed", "folder", job.Folder, "err", err)
 		job.mu.Lock()
 		job.Status = shared.JobStatusFailed
 		job.Error = err.Error()
@@ -91,7 +130,7 @@ func runPlan(job *ScanJob) {
 
 	// Check for cancellation after file discovery
 	select {
-	case <-job.Ctx().Done():
+	case <-ctx.Done():
 		job.mu.Lock()
 		job.Status = shared.JobStatusCancelled
 		job.DoneAt = time.Now()
@@ -132,7 +171,7 @@ func runPlan(job *ScanJob) {
 
 	// Check for cancellation after planning
 	select {
-	case <-job.Ctx().Done():
+	case <-ctx.Done():
 		job.mu.Lock()
 		job.Status = shared.JobStatusCancelled
 		job.DoneAt = time.Now()
@@ -149,10 +188,20 @@ func runPlan(job *ScanJob) {
 	job.mu.Unlock()
 }
 
-func runExecute(job *ScanJob) {
+func runExecute(ctx context.Context, job *ScanJob) {
+	defer func() {
+		if r := recover(); r != nil {
+			job.mu.Lock()
+			job.Status = shared.JobStatusFailed
+			job.Error = fmt.Sprintf("%v", r)
+			job.DoneAt = time.Now()
+			job.mu.Unlock()
+		}
+	}()
+
 	// Check for cancellation before starting execution
 	select {
-	case <-job.Ctx().Done():
+	case <-ctx.Done():
 		job.mu.Lock()
 		job.Status = shared.JobStatusCancelled
 		job.DoneAt = time.Now()
@@ -164,7 +213,7 @@ func runExecute(job *ScanJob) {
 
 	switch job.Mode {
 	case "sort":
-		ExecuteSort(job.SortPlan, job.Operation)
+		ExecuteSort(ctx, job.SortPlan, job.Operation)
 		job.mu.Lock()
 		for _, e := range job.SortPlan {
 			if e.Status == "done" {
@@ -173,7 +222,7 @@ func runExecute(job *ScanJob) {
 		}
 		job.mu.Unlock()
 	case "rename":
-		ExecuteRename(job.RenamePlan, job.Operation)
+		ExecuteRename(ctx, job.RenamePlan, job.Operation)
 		job.mu.Lock()
 		for _, e := range job.RenamePlan {
 			if e.Status == "done" {
@@ -184,84 +233,76 @@ func runExecute(job *ScanJob) {
 	}
 
 	job.mu.Lock()
-	job.Phase = "done"
-	job.Status = shared.JobStatusDone
-	job.Progress = 1.0
+	if ctx.Err() != nil {
+		job.Phase = "cancelled"
+		job.Status = shared.JobStatusCancelled
+		job.Message = "Execution was interrupted"
+	} else {
+		job.Phase = "done"
+		job.Status = shared.JobStatusDone
+		job.Progress = 1.0
+	}
 	job.DoneAt = time.Now()
 	job.mu.Unlock()
 }
 
-// GetUnifiedPlan returns the plan entries in a unified format matching the
-// Python API's response (each entry has "source", "destination", "conflict").
-func GetUnifiedPlan(job *ScanJob) []map[string]interface{} {
+// GetUnifiedPlan returns the plan entries in a unified typed format.
+func GetUnifiedPlan(job *ScanJob) []UnifiedPlanEntry {
 	job.mu.Lock()
 	defer job.mu.Unlock()
 
 	if job.Mode == "sort" {
-		plan := make([]map[string]interface{}, len(job.SortPlan))
+		plan := make([]UnifiedPlanEntry, len(job.SortPlan))
 		for i, e := range job.SortPlan {
-			entry := map[string]interface{}{
-				"source":      e.Source,
-				"destination": e.Destination,
+			plan[i] = UnifiedPlanEntry{
+				Source:      e.Source,
+				Destination: e.Destination,
+				Conflict:    e.Status == "conflict",
 			}
-			if e.Status == "conflict" {
-				entry["conflict"] = true
-			}
-			plan[i] = entry
 		}
 		return plan
 	}
 
-	plan := make([]map[string]interface{}, len(job.RenamePlan))
+	plan := make([]UnifiedPlanEntry, len(job.RenamePlan))
 	for i, e := range job.RenamePlan {
-		entry := map[string]interface{}{
-			"source":      e.Source,
-			"destination": e.Destination,
+		plan[i] = UnifiedPlanEntry{
+			Source:      e.Source,
+			Destination: e.Destination,
+			Conflict:    e.Status == "conflict",
 		}
-		if e.Status == "conflict" {
-			entry["conflict"] = true
-		}
-		plan[i] = entry
 	}
 	return plan
 }
 
-// GetExecutionResult returns execution stats matching the Python API format.
-func GetExecutionResult(job *ScanJob) map[string]interface{} {
+// GetExecutionResult returns execution stats.
+func GetExecutionResult(job *ScanJob) ExecutionResult {
 	job.mu.Lock()
 	defer job.mu.Unlock()
 
-	completed := 0
-	errors := 0
-	skipped := 0
-
+	var res ExecutionResult
 	if job.Mode == "sort" {
 		for _, e := range job.SortPlan {
 			switch e.Status {
 			case "done":
-				completed++
+				res.Completed++
 			case "error":
-				errors++
+				res.Errors++
 			case "conflict", "skipped":
-				skipped++
+				res.Skipped++
 			}
 		}
 	} else {
 		for _, e := range job.RenamePlan {
 			switch e.Status {
 			case "done":
-				completed++
+				res.Completed++
 			case "error":
-				errors++
+				res.Errors++
 			case "conflict", "skipped":
-				skipped++
+				res.Skipped++
 			}
 		}
 	}
 
-	return map[string]interface{}{
-		"completed": completed,
-		"errors":    errors,
-		"skipped":   skipped,
-	}
+	return res
 }

@@ -1,8 +1,12 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/exterex/morphic/internal/converter"
@@ -12,16 +16,44 @@ import (
 
 var conversionStore = shared.NewJobStore[conversionJob]()
 
-type conversionJob struct {
-	shared.Job
-	Total       int                      `json:"total"`
-	Completed   int                      `json:"completed"`
-	CurrentFile string                   `json:"current_file"`
-	Results     []map[string]interface{} `json:"results"`
+// ConversionResult stores the conversion result of a single file.
+type ConversionResult struct {
+	Source          string `json:"source"`
+	Destination     string `json:"destination,omitempty"`
+	Status          string `json:"status"` // "ok" | "error"
+	Error           string `json:"error,omitempty"`
+	OriginalSize    int64  `json:"original_size,omitempty"`
+	NewSize         int64  `json:"new_size,omitempty"`
+	OriginalSizeFmt string `json:"original_size_fmt,omitempty"`
+	NewSizeFmt      string `json:"new_size_fmt,omitempty"`
+	SourceDeleted   bool   `json:"source_deleted"`
 }
 
-func init() {
-	conversionStore.StartCleanup(30*time.Minute, func(j *conversionJob) time.Time {
+type conversionJob struct {
+	shared.Job
+	mu          sync.RWMutex
+	cond        *sync.Cond
+	Total       int                `json:"total"`
+	Completed   int                `json:"completed"`
+	CurrentFile string             `json:"current_file"`
+	Results     []ConversionResult `json:"results"`
+}
+
+func newConversionJob(total int) *conversionJob {
+	j := &conversionJob{
+		Job:     shared.NewJob(),
+		Total:   total,
+		Results: make([]ConversionResult, 0, total),
+	}
+	j.cond = sync.NewCond(&j.mu)
+	return j
+}
+
+// StartConverterCleanup starts background cleanup for conversion jobs.
+func StartConverterCleanup(ctx context.Context, ttl time.Duration) {
+	conversionStore.StartCleanup(ctx, ttl, func(j *conversionJob) time.Time {
+		j.mu.RLock()
+		defer j.mu.RUnlock()
 		return j.DoneAt
 	})
 }
@@ -34,6 +66,7 @@ func registerConverterRoutes(r *gin.Engine) {
 		g.POST("/convert", handleConverterConvert)
 		g.GET("/progress/:id", handleConverterProgress)
 		g.GET("/progress/:id/poll", handleConverterPoll)
+		g.GET("/progress/:id/stream", handleConverterStream)
 		g.POST("/progress/:id/cancel", handleConverterCancel)
 		g.POST("/delete", handleConverterDelete)
 	}
@@ -46,11 +79,11 @@ func handleConverterScan(c *gin.Context) {
 		FilterType        string `json:"filter_type"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 	if req.Folder == "" || !isAbsPath(req.Folder) || !isDir(req.Folder) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid folder: " + req.Folder})
+		respondError(c, http.StatusBadRequest, "INVALID_FOLDER", "Invalid folder: "+req.Folder)
 		return
 	}
 	includeSub := true
@@ -64,7 +97,7 @@ func handleConverterScan(c *gin.Context) {
 
 	result, err := converter.ScanFolder(req.Folder, includeSub, filterType)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "SCAN_FAILED", err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -88,20 +121,20 @@ func handleConverterConvert(c *gin.Context) {
 		AV1CRF         *int     `json:"av1_crf"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 	if len(req.Files) == 0 || req.TargetExt == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "files and target_ext required"})
+		respondError(c, http.StatusBadRequest, "MISSING_PARAMETERS", "files and target_ext required")
 		return
 	}
 	if !converter.IsValidTargetExt(req.TargetExt) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported or invalid target_ext: " + req.TargetExt})
+		respondError(c, http.StatusBadRequest, "INVALID_TARGET_EXT", "Unsupported or invalid target_ext: "+req.TargetExt)
 		return
 	}
 	for _, f := range req.Files {
 		if !isAbsPath(f) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file path: " + f})
+			respondError(c, http.StatusBadRequest, "INVALID_PATH", "Invalid file path: "+f)
 			return
 		}
 	}
@@ -111,35 +144,51 @@ func handleConverterConvert(c *gin.Context) {
 		av1CRF = *req.AV1CRF
 	}
 
-	job := &conversionJob{
-		Job:   shared.NewJob(),
-		Total: len(req.Files),
-	}
+	job := newConversionJob(len(req.Files))
 	job.Status = shared.JobStatusRunning
 	conversionStore.Set(job.ID, job)
 
-	go runConversion(job, req.Files, req.TargetExt, req.Codec, req.DeleteOriginal, av1CRF)
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	conversionStore.RegisterCancel(job.ID, bgCancel)
+
+	go runConversion(bgCtx, job, req.Files, req.TargetExt, req.Codec, req.DeleteOriginal, av1CRF)
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID})
 }
 
-func runConversion(job *conversionJob, files []string, targetExt, codec string, deleteOriginal bool, av1CRF int) {
+func runConversion(ctx context.Context, job *conversionJob, files []string, targetExt, codec string, deleteOriginal bool, av1CRF int) {
+	defer func() {
+		job.mu.Lock()
+		job.CurrentFile = ""
+		if job.DoneAt.IsZero() {
+			job.DoneAt = time.Now()
+		}
+		job.cond.Broadcast()
+		job.mu.Unlock()
+	}()
+
 	for i, source := range files {
 		// Check for cancellation before each file
 		select {
-		case <-job.Ctx().Done():
+		case <-ctx.Done():
+			job.mu.Lock()
 			job.Status = shared.JobStatusCancelled
 			job.CurrentFile = ""
 			job.DoneAt = time.Now()
+			job.cond.Broadcast()
+			job.mu.Unlock()
 			return
 		default:
 		}
 
+		job.mu.Lock()
 		job.CurrentFile = source
+		job.cond.Broadcast()
+		job.mu.Unlock()
 
-		result := map[string]interface{}{
-			"source":         source,
-			"source_deleted": false,
+		result := ConversionResult{
+			Source:        source,
+			SourceDeleted: false,
 		}
 
 		origSize := int64(0)
@@ -147,52 +196,61 @@ func runConversion(job *conversionJob, files []string, targetExt, codec string, 
 			origSize = info.Size()
 		}
 
-		dest, err := converter.ConvertFile(source, targetExt, codec, "", av1CRF)
+		dest, err := converter.ConvertFile(ctx, source, targetExt, codec, "", av1CRF)
 		if err != nil {
-			result["destination"] = nil
-			result["status"] = "error"
-			result["error"] = err.Error()
+			result.Status = "error"
+			result.Error = err.Error()
 		} else {
 			newSize := int64(0)
 			if info, err := os.Stat(dest); err == nil {
 				newSize = info.Size()
 			}
 
-			result["destination"] = dest
-			result["status"] = "ok"
-			result["original_size"] = origSize
-			result["new_size"] = newSize
-			result["original_size_fmt"] = shared.FormatFileSize(origSize)
-			result["new_size_fmt"] = shared.FormatFileSize(newSize)
+			result.Destination = dest
+			result.Status = "ok"
+			result.OriginalSize = origSize
+			result.NewSize = newSize
+			result.OriginalSizeFmt = shared.FormatFileSize(origSize)
+			result.NewSizeFmt = shared.FormatFileSize(newSize)
 
 			// Delete original only if explicitly requested and safe
 			if deleteOriginal && dest != "" {
-				absSrc, _ := absPath(source)
-				absDest, _ := absPath(dest)
-				if absSrc != absDest && newSize > 0 {
+				absSrc, errSrc := filepath.Abs(source)
+				absDest, errDest := filepath.Abs(dest)
+				if errSrc == nil && errDest == nil && absSrc != absDest && newSize > 0 {
 					if err := os.Remove(source); err == nil {
-						result["source_deleted"] = true
+						result.SourceDeleted = true
 					}
 				}
 			}
 		}
 
+		job.mu.Lock()
 		job.Results = append(job.Results, result)
 		job.Completed = i + 1
+		job.cond.Broadcast()
+		job.mu.Unlock()
 	}
 
+	job.mu.Lock()
 	job.Status = shared.JobStatusDone
 	job.CurrentFile = ""
 	job.DoneAt = time.Now()
+	job.cond.Broadcast()
+	job.mu.Unlock()
 }
 
 func handleConverterProgress(c *gin.Context) {
 	id := c.Param("id")
 	job, ok := conversionStore.Get(id)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
+
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+
 	c.JSON(http.StatusOK, gin.H{
 		"id":           job.ID,
 		"status":       job.Status,
@@ -208,29 +266,28 @@ func handleConverterPoll(c *gin.Context) {
 	id := c.Param("id")
 	job, ok := conversionStore.Get(id)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
 
-	lastStr := c.Query("last")
 	last := -1
-	if lastStr != "" {
-		for i := 0; i < len(lastStr); i++ {
-			if lastStr[i] >= '0' && lastStr[i] <= '9' {
-				last = last*10 + int(lastStr[i]-'0')
-			}
+	if lastStr := c.Query("last"); lastStr != "" {
+		if n, err := strconv.Atoi(lastStr); err == nil {
+			last = n
 		}
 	}
 
+	// Fast wait on condition variable instead of busy spin
+	job.mu.Lock()
 	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if job.Completed != last || job.Status == shared.JobStatusDone {
-			break
-		}
-		time.Sleep(300 * time.Millisecond)
+	for job.Completed == last && job.Status == shared.JobStatusRunning && time.Now().Before(deadline) {
+		// Wait with short timeout
+		job.mu.Unlock()
+		time.Sleep(100 * time.Millisecond)
+		job.mu.Lock()
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"id":           job.ID,
 		"status":       job.Status,
 		"total":        job.Total,
@@ -238,7 +295,10 @@ func handleConverterPoll(c *gin.Context) {
 		"current_file": job.CurrentFile,
 		"results":      job.Results,
 		"error":        job.Error,
-	})
+	}
+	job.mu.Unlock()
+
+	c.JSON(http.StatusOK, resp)
 }
 
 func handleConverterDelete(c *gin.Context) {
@@ -246,69 +306,22 @@ func handleConverterDelete(c *gin.Context) {
 		Files []string `json:"files"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 	if len(req.Files) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No files specified"})
+		respondError(c, http.StatusBadRequest, "EMPTY_FILES", "No files specified")
 		return
 	}
 
-	var results []map[string]interface{}
-	totalFreed := int64(0)
-
-	for _, fp := range req.Files {
-		if !isAbsPath(fp) {
-			results = append(results, map[string]interface{}{"path": fp, "status": "not_found"})
-			continue
-		}
-		info, err := os.Stat(fp)
-		if err != nil {
-			results = append(results, map[string]interface{}{"path": fp, "status": "not_found"})
-			continue
-		}
-		if info.IsDir() {
-			results = append(results, map[string]interface{}{"path": fp, "status": "not_found"})
-			continue
-		}
-		size := info.Size()
-		if err := os.Remove(fp); err != nil {
-			if os.IsPermission(err) {
-				results = append(results, map[string]interface{}{"path": fp, "status": "permission_denied"})
-			} else {
-				results = append(results, map[string]interface{}{"path": fp, "status": "error", "error": err.Error()})
-			}
-		} else {
-			totalFreed += size
-			results = append(results, map[string]interface{}{"path": fp, "status": "deleted", "size_freed": size})
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"results":               results,
-		"total_freed":           totalFreed,
-		"total_freed_formatted": shared.FormatFileSize(totalFreed),
-	})
+	c.JSON(http.StatusOK, executeDeleteFiles(req.Files))
 }
 
 func handleConverterCancel(c *gin.Context) {
 	id := c.Param("id")
-	job, ok := conversionStore.Get(id)
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+	if !conversionStore.Cancel(id) {
+		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
-	job.Cancel()
 	c.JSON(http.StatusOK, gin.H{"status": "cancelling"})
-}
-
-func absPath(p string) (string, error) {
-	abs, err := os.Getwd()
-	if err != nil {
-		return p, err
-	}
-	if len(p) > 0 && p[0] == '/' {
-		return p, nil
-	}
-	return abs + "/" + p, nil
 }
