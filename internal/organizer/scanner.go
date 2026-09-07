@@ -7,7 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/exterex/morphic/internal/database"
+	"github.com/exterex/morphic/internal/events"
 	"github.com/exterex/morphic/internal/shared"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // UnifiedPlanEntry represents an organizer plan entry matching the API response.
@@ -41,9 +44,18 @@ type ScanJob struct {
 	RenamePlan  []RenamePlanEntry `json:"rename_plan,omitempty"`
 	Total       int               `json:"total"`
 	Processed   int               `json:"processed"`
+	Pool        *pgxpool.Pool     `json:"-"`
 }
 
-var store = shared.NewJobStore[ScanJob]()
+var (
+	store  = shared.NewJobStore[ScanJob]()
+	dbPool *pgxpool.Pool
+)
+
+// SetDBPool sets the database connection pool for organizer.
+func SetDBPool(pool *pgxpool.Pool) {
+	dbPool = pool
+}
 
 // StartCleanup starts the background cleanup goroutine for expired organizer jobs.
 func StartCleanup(ctx context.Context, ttl time.Duration) {
@@ -53,7 +65,11 @@ func StartCleanup(ctx context.Context, ttl time.Duration) {
 }
 
 // StartPlanJob starts a new planning job.
-func StartPlanJob(parentCtx context.Context, folder, mode, template, destination, operation string, startSeq int) string {
+func StartPlanJob(parentCtx context.Context, pool *pgxpool.Pool, folder, mode, template, destination, operation string, startSeq int) string {
+	if pool == nil {
+		pool = dbPool
+	}
+
 	job := &ScanJob{
 		Job:         shared.NewJob(),
 		Folder:      folder,
@@ -63,12 +79,24 @@ func StartPlanJob(parentCtx context.Context, folder, mode, template, destination
 		Destination: destination,
 		Operation:   operation,
 		StartSeq:    startSeq,
+		Pool:        pool,
 	}
 	job.Status = shared.JobStatusRunning
 
 	store.Set(job.ID, job)
 
-	ctx, cancel := context.WithCancel(parentCtx)
+	if pool != nil {
+		_ = database.CreateJob(parentCtx, pool, database.JobRecord{
+			ID:        job.ID,
+			Type:      "organizer",
+			Status:    string(job.Status),
+			Progress:  job.Progress,
+			Message:   "Scanning files...",
+			StartedAt: job.StartedAt,
+		})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
 	store.RegisterCancel(job.ID, cancel)
 
 	go runPlan(ctx, job)
@@ -99,7 +127,7 @@ func ExecuteJob(parentCtx context.Context, id string) bool {
 	job.Processed = 0
 	job.mu.Unlock()
 
-	ctx, cancel := context.WithCancel(parentCtx)
+	ctx, cancel := context.WithCancel(context.Background())
 	store.RegisterCancel(job.ID, cancel)
 
 	go runExecute(ctx, job)
@@ -114,6 +142,11 @@ func runPlan(ctx context.Context, job *ScanJob) {
 			job.Error = fmt.Sprintf("%v", r)
 			job.DoneAt = time.Now()
 			job.mu.Unlock()
+
+			if job.Pool != nil {
+				_ = database.UpdateJobStatus(context.Background(), job.Pool, job.ID, "failed", job.Progress, "Planning failed", job.Error, nil)
+			}
+			events.DefaultBus.Publish("organizer", "job_failed", planResponse(job))
 		}
 	}()
 
@@ -128,14 +161,9 @@ func runPlan(ctx context.Context, job *ScanJob) {
 		return
 	}
 
-	// Check for cancellation after file discovery
 	select {
 	case <-ctx.Done():
-		job.mu.Lock()
-		job.Status = shared.JobStatusCancelled
-		job.DoneAt = time.Now()
-		job.Message = "Scan was interrupted"
-		job.mu.Unlock()
+		markCancelled(job)
 		return
 	default:
 	}
@@ -151,6 +179,7 @@ func runPlan(ctx context.Context, job *ScanJob) {
 	job.Phase = "planning"
 	job.Progress = 0.3
 	job.mu.Unlock()
+	publishProgress(job)
 
 	switch job.Mode {
 	case "sort":
@@ -169,14 +198,9 @@ func runPlan(ctx context.Context, job *ScanJob) {
 		job.mu.Unlock()
 	}
 
-	// Check for cancellation after planning
 	select {
 	case <-ctx.Done():
-		job.mu.Lock()
-		job.Status = shared.JobStatusCancelled
-		job.DoneAt = time.Now()
-		job.Message = "Scan was interrupted"
-		job.mu.Unlock()
+		markCancelled(job)
 		return
 	default:
 	}
@@ -186,6 +210,8 @@ func runPlan(ctx context.Context, job *ScanJob) {
 	job.Progress = 1.0
 	job.Message = "Plan ready for review"
 	job.mu.Unlock()
+
+	publishProgress(job)
 }
 
 func runExecute(ctx context.Context, job *ScanJob) {
@@ -196,17 +222,17 @@ func runExecute(ctx context.Context, job *ScanJob) {
 			job.Error = fmt.Sprintf("%v", r)
 			job.DoneAt = time.Now()
 			job.mu.Unlock()
+
+			if job.Pool != nil {
+				_ = database.UpdateJobStatus(context.Background(), job.Pool, job.ID, "failed", job.Progress, "Execution failed", job.Error, nil)
+			}
+			events.DefaultBus.Publish("organizer", "job_failed", planResponse(job))
 		}
 	}()
 
-	// Check for cancellation before starting execution
 	select {
 	case <-ctx.Done():
-		job.mu.Lock()
-		job.Status = shared.JobStatusCancelled
-		job.DoneAt = time.Now()
-		job.Message = "Execution was interrupted"
-		job.mu.Unlock()
+		markCancelled(job)
 		return
 	default:
 	}
@@ -241,9 +267,114 @@ func runExecute(ctx context.Context, job *ScanJob) {
 		job.Phase = "done"
 		job.Status = shared.JobStatusDone
 		job.Progress = 1.0
+		job.Message = "Execution completed"
 	}
 	job.DoneAt = time.Now()
 	job.mu.Unlock()
+
+	if job.Pool != nil {
+		_ = database.UpdateJobStatus(context.Background(), job.Pool, job.ID, string(job.Status), job.Progress, job.Message, job.Error, map[string]interface{}{
+			"execution": GetExecutionResult(job),
+		})
+	}
+
+	events.DefaultBus.Publish("organizer", "job_done", planResponse(job))
+}
+
+func markCancelled(job *ScanJob) {
+	job.mu.Lock()
+	job.Status = shared.JobStatusCancelled
+	job.DoneAt = time.Now()
+	job.Message = "Execution was interrupted"
+	job.mu.Unlock()
+
+	if job.Pool != nil {
+		_ = database.UpdateJobStatus(context.Background(), job.Pool, job.ID, "cancelled", job.Progress, job.Message, "", nil)
+	}
+	events.DefaultBus.Publish("organizer", "job_cancelled", planResponse(job))
+}
+
+func publishProgress(job *ScanJob) {
+	events.DefaultBus.Publish("organizer", "progress", planResponse(job))
+}
+
+func planResponse(job *ScanJob) map[string]interface{} {
+	job.mu.Lock()
+	defer job.mu.Unlock()
+
+	resp := map[string]interface{}{
+		"id":        job.ID,
+		"status":    job.Status,
+		"phase":     job.Phase,
+		"mode":      job.Mode,
+		"operation": job.Operation,
+		"progress":  job.Progress,
+		"message":   job.Message,
+		"error":     job.Error,
+	}
+
+	if job.Phase == "planned" || job.Phase == "executing" || job.Phase == "done" {
+		plan := make([]UnifiedPlanEntry, 0)
+		conflicts := 0
+		if job.Mode == "sort" {
+			for _, e := range job.SortPlan {
+				isConflict := e.Status == "conflict"
+				if isConflict {
+					conflicts++
+				}
+				plan = append(plan, UnifiedPlanEntry{
+					Source:      e.Source,
+					Destination: e.Destination,
+					Conflict:    isConflict,
+				})
+			}
+		} else {
+			for _, e := range job.RenamePlan {
+				isConflict := e.Status == "conflict"
+				if isConflict {
+					conflicts++
+				}
+				plan = append(plan, UnifiedPlanEntry{
+					Source:      e.Source,
+					Destination: e.Destination,
+					Conflict:    isConflict,
+				})
+			}
+		}
+		resp["plan"] = plan
+		resp["plan_count"] = len(plan)
+		resp["conflicts"] = conflicts
+	}
+
+	if job.Phase == "done" {
+		var res ExecutionResult
+		if job.Mode == "sort" {
+			for _, e := range job.SortPlan {
+				switch e.Status {
+				case "done":
+					res.Completed++
+				case "error":
+					res.Errors++
+				case "conflict", "skipped":
+					res.Skipped++
+				}
+			}
+		} else {
+			for _, e := range job.RenamePlan {
+				switch e.Status {
+				case "done":
+					res.Completed++
+				case "error":
+					res.Errors++
+				case "conflict", "skipped":
+					res.Skipped++
+				}
+			}
+		}
+		resp["execution"] = res
+	}
+
+	return resp
 }
 
 // GetUnifiedPlan returns the plan entries in a unified typed format.

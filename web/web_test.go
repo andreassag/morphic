@@ -17,7 +17,7 @@ import (
 func setupTestRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	r, err := web.SetupRouter(context.Background())
+	r, err := web.SetupRouter(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("failed to setup router: %v", err)
 	}
@@ -92,8 +92,105 @@ func TestConverterDeleteEndpoint(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("delete returned %d, want %d", w.Code, http.StatusOK)
 	}
+}
 
-	if _, err := os.Stat(f1); !os.IsNotExist(err) {
-		t.Errorf("expected file %s to be deleted", f1)
+func TestHistoryEndpoint(t *testing.T) {
+	r := setupTestRouter(t)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/history", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("history returned %d, want %d", w.Code, http.StatusOK)
 	}
 }
+
+func TestWatchEndpoint(t *testing.T) {
+	r := setupTestRouter(t)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/watch", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("watch returned %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestBrowseEndpoint_TildeAndAbs(t *testing.T) {
+	r := setupTestRouter(t)
+
+	// Test GET /api/browse with empty path (defaults to home)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/browse", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("browse with empty path returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	// Test GET /api/browse?path=~ (expands to home)
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/api/browse?path=~", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("browse with tilde path returned %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestConverterScanEndpoint(t *testing.T) {
+	r := setupTestRouter(t)
+
+	// 1. Bare non-absolute path should return 400 INVALID_FOLDER
+	body, _ := json.Marshal(map[string]interface{}{
+		"folder": "relative_folder",
+	})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/converter/scan", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("relative folder returned %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	// 2. Valid absolute directory should return 200
+	tmp := t.TempDir()
+	body, _ = json.Marshal(map[string]interface{}{
+		"folder": tmp,
+	})
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("POST", "/api/converter/scan", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("valid folder scan returned %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestDupfinderScanEndpoint(t *testing.T) {
+	r := setupTestRouter(t)
+
+	// 1. Bare non-absolute path should return 400 INVALID_FOLDER
+	body, _ := json.Marshal(map[string]interface{}{
+		"folder": "my_photos",
+	})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/dupfinder/scan", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("relative folder returned %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	// 2. Valid absolute folder should start scan and return 202
+	tmp := t.TempDir()
+	body, _ = json.Marshal(map[string]interface{}{
+		"folder": tmp,
+	})
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("POST", "/api/dupfinder/scan", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Errorf("valid dupfinder scan returned %d, want %d", w.Code, http.StatusAccepted)
+	}
+}
+

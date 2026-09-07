@@ -14,13 +14,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/exterex/morphic/internal/database"
 	"github.com/exterex/morphic/internal/shared"
 	"github.com/exterex/morphic/web"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
-	host := flag.String("host", "127.0.0.1", "Host to bind to")
-	port := flag.Int("port", 8000, "Port to listen on")
+	host := flag.String("host", "0.0.0.0", "Host to bind to")
+	port := flag.Int("port", 8001, "Port to listen on")
+	dbURL := flag.String("database-url", "", "PostgreSQL connection string (e.g. postgres://morphic:morphic@localhost:5432/morphic)")
 	noBrowser := flag.Bool("no-browser", false, "Don't open browser automatically")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
@@ -34,10 +37,31 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	addr := fmt.Sprintf("%s:%d", *host, *port)
-	url := fmt.Sprintf("http://%s", addr)
+	// Resolve database URL from flag or environment
+	resolvedDBURL := *dbURL
+	if resolvedDBURL == "" {
+		resolvedDBURL = os.Getenv("DATABASE_URL")
+	}
 
-	router, err := web.SetupRouter(ctx)
+	var pool *pgxpool.Pool
+	if resolvedDBURL != "" {
+		slog.Info("connecting to PostgreSQL database...")
+		var err error
+		pool, err = database.Connect(ctx, database.DefaultConfig(resolvedDBURL))
+		if err != nil {
+			slog.Error("failed to connect to PostgreSQL database", "err", err)
+			os.Exit(1)
+		}
+		defer pool.Close()
+		slog.Info("PostgreSQL database connected and schema migrated successfully")
+	} else {
+		slog.Warn("no DATABASE_URL provided; running in standalone mode without persistent caching")
+	}
+
+	addr := fmt.Sprintf("%s:%d", *host, *port)
+	url := fmt.Sprintf("http://localhost:%d", *port)
+
+	router, err := web.SetupRouter(ctx, pool)
 	if err != nil {
 		slog.Error("failed to configure router", "err", err)
 		os.Exit(1)
@@ -53,8 +77,8 @@ func main() {
 	}
 
 	go func() {
-		slog.Info("Morphic starting", "version", shared.Version, "url", url)
-		if !*noBrowser {
+		slog.Info("Morphic starting", "version", shared.Version, "addr", addr, "url", url)
+		if !*noBrowser && runtime.GOOS != "linux" {
 			go openBrowser(url)
 		}
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -67,7 +91,7 @@ func main() {
 	<-ctx.Done()
 	slog.Info("shutting down server gracefully...")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {

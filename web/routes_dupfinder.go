@@ -1,28 +1,28 @@
 package web
 
 import (
-	"context"
 	"net/http"
 	"time"
 
 	"github.com/exterex/morphic/internal/dupfinder"
 	"github.com/exterex/morphic/internal/shared"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func registerDupfinderRoutes(r *gin.Engine) {
+func registerDupfinderRoutes(r *gin.Engine, pool *pgxpool.Pool) {
 	g := r.Group("/api/dupfinder")
 	{
-		g.POST("/scan", handleDupfinderScan)
+		g.POST("/scan", func(c *gin.Context) { handleDupfinderScan(c, pool) })
 		g.GET("/scan/:id/status", handleDupfinderStatus)
-		g.GET("/scan/:id/stream", handleDupfinderStream)
 		g.GET("/scan/:id/results", handleDupfinderResults)
 		g.POST("/scan/:id/cancel", handleDupfinderCancel)
-		g.POST("/delete", handleDupfinderDelete)
+		g.POST("/auto-select", handleDupfinderAutoSelect)
+		g.POST("/delete", func(c *gin.Context) { handleDupfinderDelete(c, pool) })
 	}
 }
 
-func handleDupfinderScan(c *gin.Context) {
+func handleDupfinderScan(c *gin.Context, pool *pgxpool.Pool) {
 	var req struct {
 		Folder         string  `json:"folder"`
 		Type           string  `json:"type"`
@@ -33,6 +33,7 @@ func handleDupfinderScan(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	req.Folder = expandPath(req.Folder)
 	if req.Folder == "" || !isAbsPath(req.Folder) || !isDir(req.Folder) {
 		respondError(c, http.StatusBadRequest, "INVALID_FOLDER", "Invalid folder: "+req.Folder)
 		return
@@ -51,7 +52,7 @@ func handleDupfinderScan(c *gin.Context) {
 		req.VideoThreshold = shared.DefaultVideoThreshold
 	}
 
-	jobID := dupfinder.StartJob(context.Background(), req.Folder, req.Type, req.ImageThreshold, req.VideoThreshold)
+	jobID := dupfinder.StartJob(c.Request.Context(), pool, req.Folder, req.Type, req.ImageThreshold, req.VideoThreshold)
 	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID})
 }
 
@@ -105,6 +106,30 @@ func handleDupfinderResults(c *gin.Context) {
 	})
 }
 
+func handleDupfinderAutoSelect(c *gin.Context) {
+	var req struct {
+		JobID string                `json:"job_id"`
+		Rule  dupfinder.CullingRule `json:"rule"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+
+	job, ok := dupfinder.GetJob(req.JobID)
+	if !ok {
+		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
+		return
+	}
+
+	var allGroups []dupfinder.DuplicateGroup
+	allGroups = append(allGroups, job.ImageGroups...)
+	allGroups = append(allGroups, job.VideoGroups...)
+
+	result := dupfinder.ApplyCullingRule(allGroups, req.Rule)
+	c.JSON(http.StatusOK, result)
+}
+
 func handleDupfinderCancel(c *gin.Context) {
 	id := c.Param("id")
 	if !dupfinder.CancelJob(id) {
@@ -114,7 +139,7 @@ func handleDupfinderCancel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "cancelling"})
 }
 
-func handleDupfinderDelete(c *gin.Context) {
+func handleDupfinderDelete(c *gin.Context, pool *pgxpool.Pool) {
 	var req struct {
 		Files []string `json:"files"`
 	}
@@ -127,5 +152,5 @@ func handleDupfinderDelete(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, executeDeleteFiles(req.Files))
+	c.JSON(http.StatusOK, executeDeleteFiles(c.Request.Context(), pool, req.Files))
 }

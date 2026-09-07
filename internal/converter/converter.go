@@ -13,8 +13,14 @@ import (
 	"github.com/exterex/morphic/internal/shared"
 )
 
+// HWAccelProfile defines a detected hardware acceleration encoder profile.
+type HWAccelProfile struct {
+	Name     string   `json:"name"`
+	Type     string   `json:"type"` // "nvenc", "qsv", "amf", "vaapi", "videotoolbox"
+	Encoders []string `json:"encoders"`
+}
+
 // probeVideoBitrate returns the total bitrate (bits/s) of source, or 0 on failure.
-// It derives the ffprobe binary from the ffmpeg binary (ffmpeg → ffprobe, ffmpeg.exe → ffprobe.exe).
 func probeVideoBitrate(ctx context.Context, source, ffmpegBin string) int64 {
 	probeBin := strings.Replace(ffmpegBin, "ffmpeg", "ffprobe", 1)
 	if _, err := exec.LookPath(probeBin); err != nil {
@@ -54,14 +60,117 @@ func ffmpegHasEncoder(ctx context.Context, bin, encoder string) bool {
 	return false
 }
 
-// getVideoEncoder returns the ffmpeg encoder name for the given codec ID.
-// Codec IDs: h264, h265, av1, vp8, vp9.
-func getVideoEncoder(ctx context.Context, codec string) (string, error) {
+// DetectAvailableHWAccels probes available GPU hardware encoders.
+func DetectAvailableHWAccels(ctx context.Context) []HWAccelProfile {
+	bin := "ffmpeg"
+	if candidates := shared.FFmpegCandidates(); len(candidates) > 0 {
+		bin = candidates[0]
+	} else {
+		return nil
+	}
+
+	var profiles []HWAccelProfile
+
+	// NVENC (NVIDIA)
+	var nvencEncoders []string
+	for _, enc := range []string{"h264_nvenc", "hevc_nvenc", "av1_nvenc"} {
+		if ffmpegHasEncoder(ctx, bin, enc) {
+			nvencEncoders = append(nvencEncoders, enc)
+		}
+	}
+	if len(nvencEncoders) > 0 {
+		profiles = append(profiles, HWAccelProfile{
+			Name:     "NVIDIA NVENC",
+			Type:     "nvenc",
+			Encoders: nvencEncoders,
+		})
+	}
+
+	// QSV (Intel QuickSync)
+	var qsvEncoders []string
+	for _, enc := range []string{"h264_qsv", "hevc_qsv", "av1_qsv"} {
+		if ffmpegHasEncoder(ctx, bin, enc) {
+			qsvEncoders = append(qsvEncoders, enc)
+		}
+	}
+	if len(qsvEncoders) > 0 {
+		profiles = append(profiles, HWAccelProfile{
+			Name:     "Intel QuickSync (QSV)",
+			Type:     "qsv",
+			Encoders: qsvEncoders,
+		})
+	}
+
+	// AMF (AMD)
+	var amfEncoders []string
+	for _, enc := range []string{"h264_amf", "hevc_amf", "av1_amf"} {
+		if ffmpegHasEncoder(ctx, bin, enc) {
+			amfEncoders = append(amfEncoders, enc)
+		}
+	}
+	if len(amfEncoders) > 0 {
+		profiles = append(profiles, HWAccelProfile{
+			Name:     "AMD AMF",
+			Type:     "amf",
+			Encoders: amfEncoders,
+		})
+	}
+
+	// VAAPI (Linux)
+	var vaapiEncoders []string
+	for _, enc := range []string{"h264_vaapi", "hevc_vaapi", "av1_vaapi"} {
+		if ffmpegHasEncoder(ctx, bin, enc) {
+			vaapiEncoders = append(vaapiEncoders, enc)
+		}
+	}
+	if len(vaapiEncoders) > 0 {
+		profiles = append(profiles, HWAccelProfile{
+			Name:     "VAAPI",
+			Type:     "vaapi",
+			Encoders: vaapiEncoders,
+		})
+	}
+
+	// VideoToolbox (Apple)
+	var vtEncoders []string
+	for _, enc := range []string{"h264_videotoolbox", "hevc_videotoolbox"} {
+		if ffmpegHasEncoder(ctx, bin, enc) {
+			vtEncoders = append(vtEncoders, enc)
+		}
+	}
+	if len(vtEncoders) > 0 {
+		profiles = append(profiles, HWAccelProfile{
+			Name:     "Apple VideoToolbox",
+			Type:     "videotoolbox",
+			Encoders: vtEncoders,
+		})
+	}
+
+	return profiles
+}
+
+// getVideoEncoder returns the ffmpeg encoder name for the given codec ID and requested hardware accelerator.
+func getVideoEncoder(ctx context.Context, codec, hwaccel string) (string, error) {
 	bin := "ffmpeg"
 	if candidates := shared.FFmpegCandidates(); len(candidates) > 0 {
 		bin = candidates[0]
 	}
 
+	hwaccel = strings.ToLower(strings.TrimSpace(hwaccel))
+	if hwaccel == "auto" {
+		// Try best available hardware encoder
+		for _, hw := range []string{"nvenc", "qsv", "amf", "vaapi", "videotoolbox"} {
+			if enc, err := getHWEncoderName(ctx, bin, codec, hw); err == nil && enc != "" {
+				return enc, nil
+			}
+		}
+	} else if hwaccel != "" {
+		if enc, err := getHWEncoderName(ctx, bin, codec, hwaccel); err == nil && enc != "" {
+			return enc, nil
+		}
+	}
+
+	// Fallback to software encoders
 	switch codec {
 	case "h264":
 		return "libx264", nil
@@ -80,6 +189,83 @@ func getVideoEncoder(ctx context.Context, codec string) (string, error) {
 		return "libvpx-vp9", nil
 	}
 	return "", fmt.Errorf("unknown codec: %s", codec)
+}
+
+func getHWEncoderName(ctx context.Context, bin, codec, hw string) (string, error) {
+	switch hw {
+	case "nvenc":
+		switch codec {
+		case "h264":
+			if ffmpegHasEncoder(ctx, bin, "h264_nvenc") {
+				return "h264_nvenc", nil
+			}
+		case "h265":
+			if ffmpegHasEncoder(ctx, bin, "hevc_nvenc") {
+				return "hevc_nvenc", nil
+			}
+		case "av1":
+			if ffmpegHasEncoder(ctx, bin, "av1_nvenc") {
+				return "av1_nvenc", nil
+			}
+		}
+	case "qsv":
+		switch codec {
+		case "h264":
+			if ffmpegHasEncoder(ctx, bin, "h264_qsv") {
+				return "h264_qsv", nil
+			}
+		case "h265":
+			if ffmpegHasEncoder(ctx, bin, "hevc_qsv") {
+				return "hevc_qsv", nil
+			}
+		case "av1":
+			if ffmpegHasEncoder(ctx, bin, "av1_qsv") {
+				return "av1_qsv", nil
+			}
+		}
+	case "amf":
+		switch codec {
+		case "h264":
+			if ffmpegHasEncoder(ctx, bin, "h264_amf") {
+				return "h264_amf", nil
+			}
+		case "h265":
+			if ffmpegHasEncoder(ctx, bin, "hevc_amf") {
+				return "hevc_amf", nil
+			}
+		case "av1":
+			if ffmpegHasEncoder(ctx, bin, "av1_amf") {
+				return "av1_amf", nil
+			}
+		}
+	case "vaapi":
+		switch codec {
+		case "h264":
+			if ffmpegHasEncoder(ctx, bin, "h264_vaapi") {
+				return "h264_vaapi", nil
+			}
+		case "h265":
+			if ffmpegHasEncoder(ctx, bin, "hevc_vaapi") {
+				return "hevc_vaapi", nil
+			}
+		case "av1":
+			if ffmpegHasEncoder(ctx, bin, "av1_vaapi") {
+				return "av1_vaapi", nil
+			}
+		}
+	case "videotoolbox":
+		switch codec {
+		case "h264":
+			if ffmpegHasEncoder(ctx, bin, "h264_videotoolbox") {
+				return "h264_videotoolbox", nil
+			}
+		case "h265":
+			if ffmpegHasEncoder(ctx, bin, "hevc_videotoolbox") {
+				return "hevc_videotoolbox", nil
+			}
+		}
+	}
+	return "", fmt.Errorf("hwaccel %s not available for codec %s", hw, codec)
 }
 
 func validateImageTargetExt(targetExt string) (string, error) {
@@ -224,9 +410,8 @@ func convertImageByFFmpeg(ctx context.Context, source, dest, ext string) (string
 	return "", lastErr
 }
 
-// ConvertVideo converts a video file using ffmpeg.
-// codec is one of: h264, h265, av1, vp8, vp9. Defaults to h264 when empty.
-func ConvertVideo(ctx context.Context, source, targetExt, codec, outputDir string, av1CRF int) (string, error) {
+// ConvertVideo converts a video file using ffmpeg with optional GPU hardware acceleration.
+func ConvertVideo(ctx context.Context, source, targetExt, codec, hwaccel, outputDir string, av1CRF int) (string, error) {
 	if !filepath.IsAbs(source) || strings.Contains(source, "\x00") {
 		return "", fmt.Errorf("invalid source path")
 	}
@@ -262,14 +447,14 @@ func ConvertVideo(ctx context.Context, source, targetExt, codec, outputDir strin
 		codec = "h264"
 	}
 
-	encoder, err := getVideoEncoder(ctx, codec)
+	encoder, err := getVideoEncoder(ctx, codec, hwaccel)
 	if err != nil {
 		return "", err
 	}
 
 	cmd := []string{bin, "-y", "-i", shared.PathForBin(bin, source), "-c:v", encoder, "-c:a", "aac"}
 
-	isAV1 := encoder == "libsvtav1" || encoder == "libaom-av1"
+	isAV1 := strings.Contains(encoder, "av1")
 	if isAV1 {
 		// AV1 requires even dimensions for YUV 4:2:0
 		cmd = append(cmd, "-vf", "crop=trunc(iw/2)*2:trunc(ih/2)*2")
@@ -288,16 +473,18 @@ func ConvertVideo(ctx context.Context, source, targetExt, codec, outputDir strin
 			crf = av1CRF
 		}
 		cmd = append(cmd, "-cpu-used", "4", "-crf", fmt.Sprintf("%d", crf))
+	case "av1_nvenc", "av1_qsv", "av1_amf", "av1_vaapi":
+		cmd = append(cmd, "-preset", "fast")
 	case "libvpx", "libvpx-vp9":
 		crf := 35
 		if av1CRF >= 10 && av1CRF <= 63 {
 			crf = av1CRF
 		}
 		cmd = append(cmd, "-crf", fmt.Sprintf("%d", crf), "-b:v", "0")
-	case "libx265":
-		cmd = append(cmd, "-preset", "fast", "-crf", "28")
-	default: // libx264
-		cmd = append(cmd, "-preset", "fast", "-crf", "23")
+	case "libx265", "hevc_nvenc", "hevc_qsv", "hevc_amf", "hevc_vaapi":
+		cmd = append(cmd, "-preset", "fast")
+	default:
+		cmd = append(cmd, "-preset", "fast")
 	}
 
 	// For AV1, cap output bitrate at 65% of source to guarantee a size reduction.
@@ -320,13 +507,12 @@ func ConvertVideo(ctx context.Context, source, targetExt, codec, outputDir strin
 }
 
 // ConvertFile is the high-level converter — routes to image or video handler.
-// codec is used only for video conversion (h264, h265, av1, vp8, vp9).
-func ConvertFile(ctx context.Context, source, targetExt, codec, outputDir string, av1CRF int) (string, error) {
+func ConvertFile(ctx context.Context, source, targetExt, codec, hwaccel, outputDir string, av1CRF int) (string, error) {
 	if shared.IsImage(source) {
 		return ConvertImage(ctx, source, targetExt, outputDir)
 	}
 	if shared.IsVideo(source) {
-		return ConvertVideo(ctx, source, targetExt, codec, outputDir, av1CRF)
+		return ConvertVideo(ctx, source, targetExt, codec, hwaccel, outputDir, av1CRF)
 	}
 	return "", fmt.Errorf("unsupported file type: %s", source)
 }

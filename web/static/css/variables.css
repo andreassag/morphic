@@ -1,0 +1,29 @@
+/* ── Design Tokens & Dark Theme ──────────────────────────────────── */
+
+:root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242835;
+    --surface3: #2d3243;
+    --border: #2e3345;
+    --border-hover: #3d445c;
+    --text: #e1e4ed;
+    --text-dim: #8b8fa3;
+    --text-muted: #5e6378;
+    --accent: #6c7bf7;
+    --accent-hover: #8590ff;
+    --accent-dim: rgba(108, 123, 247, 0.15);
+    --danger: #f75c6c;
+    --danger-hover: #ff7a87;
+    --danger-dim: rgba(247, 92, 108, 0.15);
+    --success: #4ade80;
+    --success-dim: rgba(74, 222, 128, 0.15);
+    --warning: #fbbf24;
+    --warning-dim: rgba(251, 191, 36, 0.15);
+    --radius-sm: 6px;
+    --radius: 10px;
+    --radius-lg: 14px;
+    --shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}

@@ -5,13 +5,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/exterex/morphic/internal/converter"
+	"github.com/exterex/morphic/internal/database"
+	"github.com/exterex/morphic/internal/events"
 	"github.com/exterex/morphic/internal/shared"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var conversionStore = shared.NewJobStore[conversionJob]()
@@ -32,21 +34,20 @@ type ConversionResult struct {
 type conversionJob struct {
 	shared.Job
 	mu          sync.RWMutex
-	cond        *sync.Cond
 	Total       int                `json:"total"`
 	Completed   int                `json:"completed"`
 	CurrentFile string             `json:"current_file"`
 	Results     []ConversionResult `json:"results"`
+	Pool        *pgxpool.Pool      `json:"-"`
 }
 
-func newConversionJob(total int) *conversionJob {
-	j := &conversionJob{
+func newConversionJob(total int, pool *pgxpool.Pool) *conversionJob {
+	return &conversionJob{
 		Job:     shared.NewJob(),
 		Total:   total,
 		Results: make([]ConversionResult, 0, total),
+		Pool:    pool,
 	}
-	j.cond = sync.NewCond(&j.mu)
-	return j
 }
 
 // StartConverterCleanup starts background cleanup for conversion jobs.
@@ -58,30 +59,30 @@ func StartConverterCleanup(ctx context.Context, ttl time.Duration) {
 	})
 }
 
-func registerConverterRoutes(r *gin.Engine) {
+func registerConverterRoutes(r *gin.Engine, pool *pgxpool.Pool) {
 	g := r.Group("/api/converter")
 	{
 		g.POST("/scan", handleConverterScan)
 		g.GET("/formats", handleConverterFormats)
-		g.POST("/convert", handleConverterConvert)
+		g.POST("/convert", func(c *gin.Context) { handleConverterConvert(c, pool) })
 		g.GET("/progress/:id", handleConverterProgress)
-		g.GET("/progress/:id/poll", handleConverterPoll)
-		g.GET("/progress/:id/stream", handleConverterStream)
 		g.POST("/progress/:id/cancel", handleConverterCancel)
-		g.POST("/delete", handleConverterDelete)
+		g.POST("/delete", func(c *gin.Context) { handleConverterDelete(c, pool) })
 	}
 }
 
 func handleConverterScan(c *gin.Context) {
 	var req struct {
-		Folder            string `json:"folder"`
-		IncludeSubfolders *bool  `json:"include_subfolders"`
-		FilterType        string `json:"filter_type"`
+		Folder            string   `json:"folder"`
+		IncludeSubfolders *bool    `json:"include_subfolders"`
+		FilterType        string   `json:"filter_type"`
+		ExcludeFolders    []string `json:"exclude_folders"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	req.Folder = expandPath(req.Folder)
 	if req.Folder == "" || !isAbsPath(req.Folder) || !isDir(req.Folder) {
 		respondError(c, http.StatusBadRequest, "INVALID_FOLDER", "Invalid folder: "+req.Folder)
 		return
@@ -95,7 +96,7 @@ func handleConverterScan(c *gin.Context) {
 		filterType = "both"
 	}
 
-	result, err := converter.ScanFolder(req.Folder, includeSub, filterType)
+	result, err := converter.ScanFolder(req.Folder, includeSub, filterType, req.ExcludeFolders...)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "SCAN_FAILED", err.Error())
 		return
@@ -109,14 +110,16 @@ func handleConverterFormats(c *gin.Context) {
 		"video": gin.H{
 			"containers": converter.VideoContainers,
 		},
+		"hwaccels": converter.DetectAvailableHWAccels(c.Request.Context()),
 	})
 }
 
-func handleConverterConvert(c *gin.Context) {
+func handleConverterConvert(c *gin.Context, pool *pgxpool.Pool) {
 	var req struct {
 		Files          []string `json:"files"`
 		TargetExt      string   `json:"target_ext"`
 		Codec          string   `json:"codec"`
+		HWAccel        string   `json:"hwaccel"`
 		DeleteOriginal bool     `json:"delete_original"`
 		AV1CRF         *int     `json:"av1_crf"`
 	}
@@ -144,47 +147,64 @@ func handleConverterConvert(c *gin.Context) {
 		av1CRF = *req.AV1CRF
 	}
 
-	job := newConversionJob(len(req.Files))
+	job := newConversionJob(len(req.Files), pool)
 	job.Status = shared.JobStatusRunning
 	conversionStore.Set(job.ID, job)
+
+	if pool != nil {
+		_ = database.CreateJob(c.Request.Context(), pool, database.JobRecord{
+			ID:        job.ID,
+			Type:      "conversion",
+			Status:    string(job.Status),
+			Progress:  0,
+			Message:   "Starting batch conversion...",
+			StartedAt: job.StartedAt,
+		})
+	}
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	conversionStore.RegisterCancel(job.ID, bgCancel)
 
-	go runConversion(bgCtx, job, req.Files, req.TargetExt, req.Codec, req.DeleteOriginal, av1CRF)
+	go runConversion(bgCtx, job, req.Files, req.TargetExt, req.Codec, req.HWAccel, req.DeleteOriginal, av1CRF)
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID})
 }
 
-func runConversion(ctx context.Context, job *conversionJob, files []string, targetExt, codec string, deleteOriginal bool, av1CRF int) {
+func runConversion(ctx context.Context, job *conversionJob, files []string, targetExt, codec, hwaccel string, deleteOriginal bool, av1CRF int) {
 	defer func() {
 		job.mu.Lock()
 		job.CurrentFile = ""
 		if job.DoneAt.IsZero() {
 			job.DoneAt = time.Now()
 		}
-		job.cond.Broadcast()
 		job.mu.Unlock()
 	}()
 
+	total := len(files)
+
 	for i, source := range files {
-		// Check for cancellation before each file
 		select {
 		case <-ctx.Done():
 			job.mu.Lock()
 			job.Status = shared.JobStatusCancelled
 			job.CurrentFile = ""
 			job.DoneAt = time.Now()
-			job.cond.Broadcast()
 			job.mu.Unlock()
+
+			if job.Pool != nil {
+				_ = database.UpdateJobStatus(context.Background(), job.Pool, job.ID, "cancelled", job.Progress, "Cancelled", "", nil)
+			}
+			events.DefaultBus.Publish("converter", "job_cancelled", convProgressMap(job))
 			return
 		default:
 		}
 
 		job.mu.Lock()
 		job.CurrentFile = source
-		job.cond.Broadcast()
+		job.Progress = float64(i) / float64(total)
 		job.mu.Unlock()
+
+		events.DefaultBus.Publish("converter", "progress", convProgressMap(job))
 
 		result := ConversionResult{
 			Source:        source,
@@ -196,7 +216,7 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 			origSize = info.Size()
 		}
 
-		dest, err := converter.ConvertFile(ctx, source, targetExt, codec, "", av1CRF)
+		dest, err := converter.ConvertFile(ctx, source, targetExt, codec, hwaccel, "", av1CRF)
 		if err != nil {
 			result.Status = "error"
 			result.Error = err.Error()
@@ -213,14 +233,12 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 			result.OriginalSizeFmt = shared.FormatFileSize(origSize)
 			result.NewSizeFmt = shared.FormatFileSize(newSize)
 
-			// Delete original only if explicitly requested and safe
 			if deleteOriginal && dest != "" {
 				absSrc, errSrc := filepath.Abs(source)
 				absDest, errDest := filepath.Abs(dest)
 				if errSrc == nil && errDest == nil && absSrc != absDest && newSize > 0 {
-					if err := os.Remove(source); err == nil {
-						result.SourceDeleted = true
-					}
+					_ = executeDeleteFiles(ctx, job.Pool, []string{source})
+					result.SourceDeleted = true
 				}
 			}
 		}
@@ -228,16 +246,43 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 		job.mu.Lock()
 		job.Results = append(job.Results, result)
 		job.Completed = i + 1
-		job.cond.Broadcast()
+		job.Progress = float64(i+1) / float64(total)
 		job.mu.Unlock()
+
+		events.DefaultBus.Publish("converter", "progress", convProgressMap(job))
 	}
 
 	job.mu.Lock()
 	job.Status = shared.JobStatusDone
 	job.CurrentFile = ""
+	job.Progress = 1.0
 	job.DoneAt = time.Now()
-	job.cond.Broadcast()
 	job.mu.Unlock()
+
+	if job.Pool != nil {
+		_ = database.UpdateJobStatus(context.Background(), job.Pool, job.ID, "done", 1.0, "Conversion completed", "", job.Results)
+	}
+
+	events.DefaultBus.Publish("converter", "job_done", convProgressMap(job))
+}
+
+func convProgressMap(job *conversionJob) map[string]interface{} {
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+
+	results := make([]ConversionResult, len(job.Results))
+	copy(results, job.Results)
+
+	return map[string]interface{}{
+		"id":           job.ID,
+		"status":       job.Status,
+		"total":        job.Total,
+		"completed":    job.Completed,
+		"progress":     job.Progress,
+		"current_file": job.CurrentFile,
+		"results":      results,
+		"error":        job.Error,
+	}
 }
 
 func handleConverterProgress(c *gin.Context) {
@@ -248,60 +293,10 @@ func handleConverterProgress(c *gin.Context) {
 		return
 	}
 
-	job.mu.RLock()
-	defer job.mu.RUnlock()
-
-	c.JSON(http.StatusOK, gin.H{
-		"id":           job.ID,
-		"status":       job.Status,
-		"total":        job.Total,
-		"completed":    job.Completed,
-		"current_file": job.CurrentFile,
-		"results":      job.Results,
-		"error":        job.Error,
-	})
+	c.JSON(http.StatusOK, convProgressMap(job))
 }
 
-func handleConverterPoll(c *gin.Context) {
-	id := c.Param("id")
-	job, ok := conversionStore.Get(id)
-	if !ok {
-		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
-		return
-	}
-
-	last := -1
-	if lastStr := c.Query("last"); lastStr != "" {
-		if n, err := strconv.Atoi(lastStr); err == nil {
-			last = n
-		}
-	}
-
-	// Fast wait on condition variable instead of busy spin
-	job.mu.Lock()
-	deadline := time.Now().Add(10 * time.Second)
-	for job.Completed == last && job.Status == shared.JobStatusRunning && time.Now().Before(deadline) {
-		// Wait with short timeout
-		job.mu.Unlock()
-		time.Sleep(100 * time.Millisecond)
-		job.mu.Lock()
-	}
-
-	resp := gin.H{
-		"id":           job.ID,
-		"status":       job.Status,
-		"total":        job.Total,
-		"completed":    job.Completed,
-		"current_file": job.CurrentFile,
-		"results":      job.Results,
-		"error":        job.Error,
-	}
-	job.mu.Unlock()
-
-	c.JSON(http.StatusOK, resp)
-}
-
-func handleConverterDelete(c *gin.Context) {
+func handleConverterDelete(c *gin.Context, pool *pgxpool.Pool) {
 	var req struct {
 		Files []string `json:"files"`
 	}
@@ -314,7 +309,7 @@ func handleConverterDelete(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, executeDeleteFiles(req.Files))
+	c.JSON(http.StatusOK, executeDeleteFiles(c.Request.Context(), pool, req.Files))
 }
 
 func handleConverterCancel(c *gin.Context) {

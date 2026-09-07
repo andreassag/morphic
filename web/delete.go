@@ -1,15 +1,19 @@
 package web
 
 import (
+	"context"
 	"os"
 
 	"github.com/exterex/morphic/internal/shared"
+	"github.com/exterex/morphic/internal/trash"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // DeleteResult describes the deletion outcome for a single file.
 type DeleteResult struct {
 	Path      string `json:"path"`
 	Status    string `json:"status"`
+	AuditID   int64  `json:"audit_id,omitempty"`
 	Error     string `json:"error,omitempty"`
 	SizeFreed int64  `json:"size_freed,omitempty"`
 }
@@ -21,8 +25,8 @@ type DeleteFilesResponse struct {
 	TotalFreedFormatted string         `json:"total_freed_formatted"`
 }
 
-// executeDeleteFiles executes file deletions across a list of file paths.
-func executeDeleteFiles(files []string) DeleteFilesResponse {
+// executeDeleteFiles executes safe-trash file deletions across a list of file paths.
+func executeDeleteFiles(ctx context.Context, pool *pgxpool.Pool, files []string) DeleteFilesResponse {
 	var results []DeleteResult
 	totalFreed := int64(0)
 
@@ -40,8 +44,9 @@ func executeDeleteFiles(files []string) DeleteFilesResponse {
 			results = append(results, DeleteResult{Path: fp, Status: "not_found"})
 			continue
 		}
-		size := info.Size()
-		if err := os.Remove(fp); err != nil {
+
+		auditID, _, size, err := trash.MoveToTrash(ctx, pool, fp)
+		if err != nil {
 			if os.IsPermission(err) {
 				results = append(results, DeleteResult{Path: fp, Status: "permission_denied"})
 			} else {
@@ -49,7 +54,12 @@ func executeDeleteFiles(files []string) DeleteFilesResponse {
 			}
 		} else {
 			totalFreed += size
-			results = append(results, DeleteResult{Path: fp, Status: "deleted", SizeFreed: size})
+			results = append(results, DeleteResult{
+				Path:      fp,
+				Status:    "deleted",
+				AuditID:   auditID,
+				SizeFreed: size,
+			})
 		}
 	}
 

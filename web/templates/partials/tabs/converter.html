@@ -1,0 +1,160 @@
+{{ define "converter_tab" }}
+<div class="tab-content active" id="tab-converter">
+<div class="container">
+
+    <!-- Scan Config Card (Collapsible) -->
+    <div class="card collapsible-card" id="convScanCard">
+        <div class="card-header" onclick="toggleCardCollapse('convScanCard')">
+            <div class="card-title"><span class="icon">📁</span> Scan Configuration</div>
+            <button class="collapse-toggle" type="button" aria-label="Toggle section">
+                <span class="chevron">▼</span>
+            </button>
+        </div>
+
+        <div class="card-body">
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="convFolder">Folder</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="convFolder" placeholder="Enter an absolute path (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('converter')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="convBrowser">
+                        <div class="fb-header">
+                            <span class="fb-path">~</span>
+                            <button class="btn btn-ghost btn-sm" onclick="closeBrowser('converter')">✕</button>
+                        </div>
+                        <div class="fb-item fb-parent" style="display:none">
+                            <span class="icon">⬆️</span> ..
+                        </div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer">
+                            <button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('converter')">✓ Use this folder</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="convExcludeFolders">Exclude Folders (comma-separated)</label>
+                    <input type="text" id="convExcludeFolders" placeholder="e.g. node_modules, temp, raw, cache" />
+                </div>
+            </div>
+
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group narrow">
+                    <label for="convFilterType">File type</label>
+                    <select id="convFilterType">
+                        <option value="both">Images &amp; Videos</option>
+                        <option value="images">Images only</option>
+                        <option value="videos">Videos only</option>
+                    </select>
+                </div>
+                <div class="form-group narrow">
+                    <label for="convHWAccel">GPU Acceleration</label>
+                    <select id="convHWAccel">
+                        <option value="auto">Auto (Best available)</option>
+                        <option value="">CPU Software (Safe)</option>
+                        <option value="qsv">Intel QuickSync (QSV)</option>
+                        <option value="nvenc">NVIDIA NVENC</option>
+                        <option value="amf">AMD AMF</option>
+                        <option value="vaapi">Linux VAAPI</option>
+                        <option value="videotoolbox">Apple VideoToolbox</option>
+                    </select>
+                </div>
+                <div class="form-group narrow">
+                    <label class="checkbox-label" style="padding-top:22px;">
+                        <input type="checkbox" id="convSubfolders" checked> Include subfolders
+                    </label>
+                </div>
+                <div class="form-group narrow">
+                    <label class="checkbox-label" style="padding-top:22px;">
+                        <input type="checkbox" id="convDeleteOrig"> Safe-Trash original after convert
+                    </label>
+                </div>
+            </div>
+
+            <div style="display:flex;gap:10px;align-items:center;">
+                <button class="btn btn-primary" id="convScanBtn" onclick="convScan()">🔍 Scan Folder</button>
+                <button class="btn btn-ghost btn-sm" onclick="toggleFullPaths()">Toggle full paths</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Compact Progress Bar for Scan -->
+    <div class="card progress-compact" id="convScanProgress" style="display:none;">
+        <div class="progress-compact-row">
+            <span class="spinner"></span>
+            <span class="progress-compact-msg" id="convScanProgressMsg">Walking folder tree...</span>
+            <div class="progress-bar-track compact">
+                <div class="progress-bar-fill indeterminate"></div>
+            </div>
+            <span class="progress-compact-pct" id="convScanElapsed">0s</span>
+        </div>
+    </div>
+
+    <!-- Compact Progress Bar for Conversion with Inline Stop Button -->
+    <div class="card progress-compact" id="convProgress" style="display:none;">
+        <div class="progress-compact-row">
+            <span class="spinner"></span>
+            <span class="progress-compact-msg" id="convProgressMsg">Converting...</span>
+            <div class="progress-bar-track compact">
+                <div class="progress-bar-fill" id="convProgressBar" style="width:0%;"></div>
+            </div>
+            <span class="progress-compact-pct" id="convProgressPct">0%</span>
+            <button class="btn btn-stop btn-sm" id="convStopBtn" onclick="convStopConvert()">⏹ Stop</button>
+        </div>
+    </div>
+
+    <!-- Scan Results -->
+    <div id="convResults" style="display:none;">
+        <div class="card">
+            <div class="card-header-flex">
+                <div class="card-title"><span class="icon">📊</span> Conversion List</div>
+                <div class="sort-controls">
+                    <span style="font-size:13px;color:var(--text-dim);">Sort by:</span>
+                    <select id="convSortBy" onchange="convSortResults(this.value)">
+                        <option value="name">Filename</option>
+                        <option value="type">Type / Ext</option>
+                        <option value="size">File Size</option>
+                    </select>
+                </div>
+            </div>
+            <div id="convSummary" style="margin-bottom:10px;"></div>
+            <!-- Extension multi-filter chips -->
+            <div id="convExtFilters" class="ext-filter-bar" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;"></div>
+        </div>
+        <div id="convFileTable" class="table-responsive" style="max-height:600px;overflow:auto;"></div>
+    </div>
+
+    <!-- Batch Convert Sticky Bar -->
+    <div class="bulk-bar" id="convBulkBar" style="display:none;">
+        <div class="bulk-info">
+            <strong id="convBulkCount">0</strong> file(s) selected
+        </div>
+        <div class="bulk-actions">
+            <!-- Video Container + Codec + Extension -->
+            <div id="convVideoDropdowns" style="display:none;align-items:center;gap:6px;flex-wrap:wrap;">
+                <span class="badge-label">Container:</span>
+                <select id="convBatchContainer" onchange="convOnBatchContainerChange()"></select>
+                <span class="badge-label">Codec:</span>
+                <select id="convBatchCodec"></select>
+                <span class="badge-label">Ext:</span>
+                <select id="convBatchExt"></select>
+            </div>
+            <!-- Image Format Dropdown -->
+            <div id="convImageDropdown" style="display:none;align-items:center;gap:6px;">
+                <span class="badge-label">Target Format:</span>
+                <select id="convBatchTarget">
+                    <option value="" disabled selected>Loading…</option>
+                </select>
+            </div>
+            <button class="btn btn-primary btn-sm" id="convBatchBtn" onclick="convConvertBatch()">🔄 Convert Selected</button>
+            <button class="btn btn-danger btn-sm" onclick="convDeleteBatch()">🗑️ Move to Trash</button>
+        </div>
+    </div>
+
+</div>
+</div>
+{{ end }}

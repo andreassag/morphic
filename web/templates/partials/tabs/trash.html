@@ -1,0 +1,51 @@
+{{ define "trash_tab" }}
+<div class="tab-content" id="tab-trash">
+<div class="container">
+
+    <div class="card">
+        <div class="card-header-flex">
+            <div class="card-title"><span class="icon">🗑️</span> Safe Trash &amp; Audit History</div>
+            <div class="toolbar-actions">
+                <select id="trashFilterOp" onchange="loadTrashHistory()">
+                    <option value="">All Operations</option>
+                    <option value="delete">Deletions (Safe Trash)</option>
+                    <option value="convert">Conversions</option>
+                    <option value="sort">Organize / Sort</option>
+                    <option value="rename">Renames</option>
+                </select>
+                <button class="btn btn-ghost btn-sm" onclick="loadTrashHistory()">🔄 Refresh</button>
+                <button class="btn btn-danger btn-sm" onclick="purgeExpiredTrash()">🧹 Purge Expired (&gt;30d)</button>
+            </div>
+        </div>
+        <p style="font-size:13px;color:var(--text-dim);margin-top:6px;">
+            Deleted files are moved to safe-trash rather than permanently destroyed. You can restore any item with 1-click.
+        </p>
+    </div>
+
+    <!-- History Table -->
+    <div class="card">
+        <div class="table-responsive" style="max-height:650px;overflow:auto;">
+            <table class="data-table" id="trashTable">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Action</th>
+                        <th>Original Path</th>
+                        <th>Size</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="trashTableBody">
+                    <tr>
+                        <td colspan="6" style="text-align:center;padding:24px;color:var(--text-dim);">Loading audit history…</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination-controls" id="trashPagination"></div>
+    </div>
+
+</div>
+</div>
+{{ end }}

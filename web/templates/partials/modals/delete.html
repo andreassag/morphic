@@ -1,0 +1,29 @@
+{{ define "delete_modal" }}
+<!-- Dupfinder Bulk Bar -->
+<div class="bulk-bar" id="dupBulkBar" style="display:none;">
+    <div class="bulk-info">
+        <strong id="dupBulkCount">0</strong> file(s) selected for deletion
+        (<span id="dupBulkSize">0 B</span>)
+    </div>
+    <div class="bulk-actions">
+        <button class="btn btn-ghost btn-sm" onclick="dupClearSelection()">Cancel</button>
+        <button class="btn btn-danger" onclick="dupConfirmDelete()">🗑️ Move to Trash</button>
+    </div>
+</div>
+
+<!-- Deletion Confirmation Modal -->
+<div class="modal-overlay" id="dupDeleteModal">
+    <div class="modal" onclick="event.stopPropagation()">
+        <h3>⚠️ Confirm Safe Deletion</h3>
+        <p>The following files will be <strong>moved to safe-trash</strong>:</p>
+        <div class="file-list" id="dupDeleteFileList"></div>
+        <p style="font-size:13px;color:var(--text-dim);margin-top:8px;">
+            Safe-trash files are retained for 30 days and can be restored at any time from the Safe Trash tab.
+        </p>
+        <div class="modal-actions">
+            <button class="btn btn-ghost" onclick="dupCloseModal()">Cancel</button>
+            <button class="btn btn-danger" id="dupConfirmDeleteBtn" onclick="dupExecuteDelete()">🗑️ Move to Trash</button>
+        </div>
+    </div>
+</div>
+{{ end }}

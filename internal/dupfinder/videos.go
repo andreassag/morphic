@@ -10,6 +10,7 @@ import (
 	"math/bits"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,7 +18,9 @@ import (
 	"sync/atomic"
 
 	"github.com/corona10/goimagehash"
+	"github.com/exterex/morphic/internal/database"
 	"github.com/exterex/morphic/internal/shared"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // VideoInfo stores information about a video file.
@@ -33,8 +36,8 @@ type VideoInfo struct {
 	HasHash     bool     `json:"-"`
 }
 
-// ComputeVideoHashes extracts frames and computes perceptual hashes.
-func ComputeVideoHashes(ctx context.Context, path string, numFrames int) VideoInfo {
+// ComputeVideoHashes extracts frames and computes perceptual hashes with PostgreSQL cache lookup.
+func ComputeVideoHashes(ctx context.Context, pool *pgxpool.Pool, path string, numFrames int) VideoInfo {
 	info := VideoInfo{Path: path}
 
 	if ctx.Err() != nil {
@@ -46,6 +49,21 @@ func ComputeVideoHashes(ctx context.Context, path string, numFrames int) VideoIn
 		return info
 	}
 	info.FileSize = st.Size()
+	modTime := st.ModTime()
+
+	// Check PostgreSQL cache
+	if pool != nil {
+		cached, err := database.LookupHash(ctx, pool, path, info.FileSize, modTime)
+		if err == nil && cached != nil && cached.PHash != 0 {
+			info.Width = cached.Width
+			info.Height = cached.Height
+			info.Duration = cached.Duration
+			info.FPS = cached.FPS
+			info.FrameHashes = []uint64{cached.PHash, cached.AHash, cached.DHash}
+			info.HasHash = true
+			return info
+		}
+	}
 
 	candidates := shared.FFmpegCandidates()
 	if len(candidates) == 0 {
@@ -101,6 +119,34 @@ func ComputeVideoHashes(ctx context.Context, path string, numFrames int) VideoIn
 	frameHashes := extractAndHashFrames(ctx, ffmpegBin, path, info.Duration, numFrames)
 	info.FrameHashes = frameHashes
 	info.HasHash = len(frameHashes) > 0
+
+	// Store primary representative hashes in PostgreSQL
+	if pool != nil && info.HasHash {
+		var ph, ah, dh uint64
+		if len(frameHashes) > 0 {
+			ph = frameHashes[0]
+		}
+		if len(frameHashes) > 1 {
+			ah = frameHashes[len(frameHashes)/2]
+		}
+		if len(frameHashes) > 2 {
+			dh = frameHashes[len(frameHashes)-1]
+		}
+
+		_ = database.StoreHash(ctx, pool, database.HashRow{
+			Path:     path,
+			FileSize: info.FileSize,
+			ModTime:  modTime,
+			PHash:    ph,
+			AHash:    ah,
+			DHash:    dh,
+			Width:    info.Width,
+			Height:   info.Height,
+			Duration: info.Duration,
+			Format:   shared.NormaliseExt(filepath.Ext(path)),
+			FPS:      info.FPS,
+		})
+	}
 
 	return info
 }
@@ -174,8 +220,7 @@ func parseFPS(s string) float64 {
 }
 
 // ProcessVideos hashes all videos concurrently and returns successful results.
-// It stops accepting new work when ctx is cancelled.
-func ProcessVideos(ctx context.Context, files []shared.FileInfo, numFrames, numWorkers int, progressCb func(processed, total int)) map[string]*VideoInfo {
+func ProcessVideos(ctx context.Context, pool *pgxpool.Pool, files []shared.FileInfo, numFrames, numWorkers int, progressCb func(processed, total int)) map[string]*VideoInfo {
 	result := make(map[string]*VideoInfo)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -198,7 +243,7 @@ func ProcessVideos(ctx context.Context, files []shared.FileInfo, numFrames, numW
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			info := ComputeVideoHashes(ctx, fi.Path, numFrames)
+			info := ComputeVideoHashes(ctx, pool, fi.Path, numFrames)
 			if info.HasHash {
 				mu.Lock()
 				result[fi.Path] = &info
@@ -215,61 +260,68 @@ func ProcessVideos(ctx context.Context, files []shared.FileInfo, numFrames, numW
 	return result
 }
 
-// ComputeVideoSimilarity computes similarity between two videos using
-// frame-level hash comparison.
-func ComputeVideoSimilarity(a, b *VideoInfo) float64 {
+// computeVideoSimilarity compares frame hashes between two videos.
+func computeVideoSimilarity(a, b *VideoInfo) float64 {
 	if len(a.FrameHashes) == 0 || len(b.FrameHashes) == 0 {
 		return 0
 	}
 
-	var total float64
-	for _, h1 := range a.FrameHashes {
-		bestSim := 0.0
-		for _, h2 := range b.FrameHashes {
-			dist := bits.OnesCount64(h1 ^ h2)
-			sim := 1.0 - float64(dist)/64.0
-			if sim > bestSim {
-				bestSim = sim
-			}
-		}
-		total += bestSim
+	minFrames := len(a.FrameHashes)
+	if len(b.FrameHashes) < minFrames {
+		minFrames = len(b.FrameHashes)
+	}
+	if minFrames == 0 {
+		return 0
 	}
 
-	return total / float64(len(a.FrameHashes))
+	var totalSim float64
+	for i := 0; i < minFrames; i++ {
+		dist := bits.OnesCount64(a.FrameHashes[i] ^ b.FrameHashes[i])
+		sim := 1.0 - float64(dist)/64.0
+		totalSim += sim
+	}
+
+	return totalSim / float64(minFrames)
 }
 
-// FindVideoDuplicates finds groups of duplicate videos with batching and cancellation support.
+// FindVideoDuplicates finds groups of duplicate videos.
 func FindVideoDuplicates(ctx context.Context, infos map[string]*VideoInfo, threshold float64, progressCb func(float64)) [][]DuplicateEntry {
-	paths := make([]string, 0, len(infos))
-	for p := range infos {
-		paths = append(paths, p)
+	var paths []string
+	for path := range infos {
+		paths = append(paths, path)
 	}
 	sort.Strings(paths)
 
-	assigned := make(map[string]bool)
 	var groups [][]DuplicateEntry
+	assigned := make(map[string]bool)
+	total := len(paths)
+	step := total / 50
+	if step < 1 {
+		step = 1
+	}
 
-	totalPaths := len(paths)
-	for i := 0; i < totalPaths; i++ {
-		if i%10 == 0 {
+	for i := 0; i < total; i++ {
+		if i%step == 0 {
 			if ctx.Err() != nil {
 				return groups
 			}
-			if progressCb != nil && totalPaths > 0 {
-				progressCb(float64(i) / float64(totalPaths))
+			if progressCb != nil && total > 0 {
+				progressCb(float64(i) / float64(total))
 			}
 		}
 
 		if assigned[paths[i]] {
 			continue
 		}
+
 		group := []DuplicateEntry{{Path: paths[i], Similarity: 1.0}}
 
-		for j := i + 1; j < totalPaths; j++ {
+		for j := i + 1; j < total; j++ {
 			if assigned[paths[j]] {
 				continue
 			}
-			sim := ComputeVideoSimilarity(infos[paths[i]], infos[paths[j]])
+
+			sim := computeVideoSimilarity(infos[paths[i]], infos[paths[j]])
 			if sim >= threshold {
 				group = append(group, DuplicateEntry{Path: paths[j], Similarity: sim})
 				assigned[paths[j]] = true

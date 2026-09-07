@@ -37,6 +37,18 @@ func TestScanFolder_basic(t *testing.T) {
 	}
 }
 
+func TestScanFolder_excludeFolders(t *testing.T) {
+	dir := assetsDir(t)
+	result, err := converter.ScanFolder(dir, true, "both", "test", "nonexistent")
+	if err != nil {
+		t.Fatalf("ScanFolder returned error: %v", err)
+	}
+	// "test" matches the root folder name in WalkDir, so it should exclude subdirs
+	if result == nil {
+		t.Fatal("expected result not nil")
+	}
+}
+
 func TestScanFolder_imageFilter(t *testing.T) {
 	dir := assetsDir(t)
 	result, err := converter.ScanFolder(dir, false, "images")
@@ -217,14 +229,14 @@ func TestConvertImage_nullBytePath(t *testing.T) {
 }
 
 func TestConvertVideo_relativePath(t *testing.T) {
-	_, err := converter.ConvertVideo(context.Background(), "relative/path/video.mp4", ".mkv", "", "", 0)
+	_, err := converter.ConvertVideo(context.Background(), "relative/path/video.mp4", ".mkv", "", "", "", 0)
 	if err == nil {
 		t.Error("expected error for relative source path, got nil")
 	}
 }
 
 func TestConvertVideo_nullBytePath(t *testing.T) {
-	_, err := converter.ConvertVideo(context.Background(), "/valid/path/video\x00.mp4", ".mkv", "", "", 0)
+	_, err := converter.ConvertVideo(context.Background(), "/valid/path/video\x00.mp4", ".mkv", "", "", "", 0)
 	if err == nil {
 		t.Error("expected error for source path containing NUL byte, got nil")
 	}

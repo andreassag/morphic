@@ -1,0 +1,108 @@
+{{ define "dupfinder_tab" }}
+<div class="tab-content" id="tab-dupfinder">
+<div class="container">
+
+    <!-- Scan Config Card (Collapsible) -->
+    <div class="card collapsible-card" id="dupScanCard">
+        <div class="card-header" onclick="toggleCardCollapse('dupScanCard')">
+            <div class="card-title"><span class="icon">⚙️</span> DupFinder Configuration</div>
+            <button class="collapse-toggle" type="button" aria-label="Toggle section">
+                <span class="chevron">▼</span>
+            </button>
+        </div>
+
+        <div class="card-body">
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="dupFolder">Folder to scan</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="dupFolder" placeholder="Enter an absolute path (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('dupfinder')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="dupBrowser">
+                        <div class="fb-header">
+                            <span class="fb-path">~</span>
+                            <button class="btn btn-ghost btn-sm" onclick="closeBrowser('dupfinder')">✕</button>
+                        </div>
+                        <div class="fb-item fb-parent" style="display:none">
+                            <span class="icon">⬆️</span> ..
+                        </div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer">
+                            <button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('dupfinder')">✓ Use this folder</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group narrow">
+                    <label for="dupScanType">Scan type</label>
+                    <select id="dupScanType">
+                        <option value="both">Images &amp; Videos</option>
+                        <option value="images">Images only</option>
+                        <option value="videos">Videos only</option>
+                    </select>
+                </div>
+                <div class="form-group narrow">
+                    <label for="dupImgThreshold">Image threshold: <span id="dupImgThreshVal">90%</span></label>
+                    <input type="range" id="dupImgThreshold" min="50" max="100" value="90" oninput="document.getElementById('dupImgThreshVal').textContent=this.value+'%'" />
+                </div>
+                <div class="form-group narrow">
+                    <label for="dupVidThreshold">Video threshold: <span id="dupVidThreshVal">85%</span></label>
+                    <input type="range" id="dupVidThreshold" min="50" max="100" value="85" oninput="document.getElementById('dupVidThreshVal').textContent=this.value+'%'" />
+                </div>
+            </div>
+
+            <button class="btn btn-primary" id="dupScanBtn" onclick="dupStartScan()">🔍 Start Scan</button>
+        </div>
+    </div>
+
+    <!-- Compact Progress Bar with Inline Stop -->
+    <div class="card progress-compact" id="dupProgress" style="display:none;">
+        <div class="progress-compact-row">
+            <span class="spinner"></span>
+            <span class="progress-compact-msg" id="dupProgressMsg">Initializing scan...</span>
+            <div class="progress-bar-track compact">
+                <div class="progress-bar-fill" id="dupProgressBar" style="width:0%;"></div>
+            </div>
+            <span class="progress-compact-pct" id="dupProgressPct">0%</span>
+            <span class="progress-compact-time" id="dupProgressElapsed">0s</span>
+            <button class="btn btn-stop btn-sm" id="dupStopBtn" onclick="dupCancelScan()">⏹ Stop</button>
+        </div>
+    </div>
+
+    <!-- Results Section -->
+    <div class="results-section" id="dupResults" style="display:none;">
+        <div class="results-summary" id="dupSummary"></div>
+
+        <div class="results-toolbar">
+            <h2 id="dupTitle" style="font-size:18px;">Duplicate Groups</h2>
+            <div class="toolbar-actions">
+                <div class="auto-cull-dropdown">
+                    <select id="dupAutoRule" onchange="dupApplyRule(this.value)">
+                        <option value="" disabled selected>⚡ Auto-select rule…</option>
+                        <option value="largest">Keep Largest Size</option>
+                        <option value="highest_resolution">Keep Highest Resolution</option>
+                        <option value="preferred_format">Keep Preferred Format (AVIF/WebP/PNG)</option>
+                        <option value="shortest_name">Keep Shortest Filename</option>
+                    </select>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="dupClearSelection()">✕ Clear selection</button>
+                <button class="btn btn-ghost btn-sm" onclick="dupExpandAll()">▼ Expand all</button>
+                <button class="btn btn-ghost btn-sm" onclick="dupCollapseAll()">▲ Collapse all</button>
+            </div>
+        </div>
+
+        <div id="dupGroups"></div>
+
+        <div class="empty-state" id="dupNoResults" style="display:none;">
+            <div class="icon">✅</div>
+            <h3>No duplicates found!</h3>
+            <p>Your media collection looks clean.</p>
+        </div>
+    </div>
+
+</div>
+</div>
+{{ end }}

@@ -1,0 +1,10 @@
+.git
+.agents
+.gemini
+bin/
+tmp/
+media/
+data/
+*.log
+*.env
+.DS_Store

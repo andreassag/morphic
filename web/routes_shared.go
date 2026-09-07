@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/exterex/morphic/internal/converter"
 	"github.com/exterex/morphic/internal/shared"
 	"github.com/gin-gonic/gin"
 )
@@ -24,27 +25,39 @@ func registerSharedRoutes(r *gin.Engine) {
 
 // handleBrowseDirectory lists directories for the in-page folder browser.
 func handleBrowseDirectory(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
+	rawPath := c.Query("path")
+	if rawPath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			home = "."
 		}
-		path = home
+		rawPath = home
 	}
 
-	path = filepath.Clean(path)
+	path := expandPath(rawPath)
 	if !isAbsPath(path) {
 		respondError(c, http.StatusBadRequest, "INVALID_PATH", "Invalid path")
 		return
 	}
+
+	browseDir := path
+	filterPrefix := ""
+
 	info, err := os.Stat(path)
 	if err != nil || !info.IsDir() {
-		respondError(c, http.StatusBadRequest, "NOT_A_DIRECTORY", "Not a directory")
-		return
+		// If path doesn't exist as a directory, check parent directory for autocomplete matching
+		parentDir := filepath.Dir(path)
+		parentInfo, pErr := os.Stat(parentDir)
+		if pErr == nil && parentInfo.IsDir() {
+			browseDir = parentDir
+			filterPrefix = strings.ToLower(filepath.Base(path))
+		} else {
+			respondError(c, http.StatusBadRequest, "NOT_A_DIRECTORY", "Not a directory")
+			return
+		}
 	}
 
-	entries, err := os.ReadDir(path)
+	entries, err := os.ReadDir(browseDir)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "READ_DIR_FAILED", err.Error())
 		return
@@ -60,10 +73,13 @@ func handleBrowseDirectory(c *gin.Context) {
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
+		if filterPrefix != "" && !strings.HasPrefix(strings.ToLower(e.Name()), filterPrefix) {
+			continue
+		}
 		if e.IsDir() {
 			dirs = append(dirs, dirEntry{
 				Name: e.Name(),
-				Path: filepath.Join(path, e.Name()),
+				Path: filepath.Join(browseDir, e.Name()),
 				Type: "directory",
 			})
 		}
@@ -72,14 +88,14 @@ func handleBrowseDirectory(c *gin.Context) {
 		return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name)
 	})
 
-	parent := filepath.Dir(path)
+	parent := filepath.Dir(browseDir)
 	var parentPtr interface{} = parent
-	if parent == path {
+	if parent == browseDir {
 		parentPtr = nil
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"current": path,
+		"current": browseDir,
 		"parent":  parentPtr,
 		"entries": dirs,
 	})
@@ -142,10 +158,9 @@ func handleThumbnail(c *gin.Context) {
 
 func handleSystemInfo(c *gin.Context) {
 	ffmpegInfo := gin.H{
-		"installed":       false,
-		"hwaccels":        []string{},
-		"encoders":        []string{},
-		"nvenc_available": false,
+		"installed": false,
+		"encoders":  []string{},
+		"profiles":  converter.DetectAvailableHWAccels(c.Request.Context()),
 	}
 
 	candidates := shared.FFmpegCandidates()
@@ -163,12 +178,6 @@ func handleSystemInfo(c *gin.Context) {
 				}
 			}
 			ffmpegInfo["encoders"] = encoders
-			for _, e := range encoders {
-				if strings.Contains(e, "nvenc") {
-					ffmpegInfo["nvenc_available"] = true
-					break
-				}
-			}
 		}
 	}
 
@@ -216,6 +225,24 @@ func handleMedia(c *gin.Context) {
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+// expandPath cleans the path and expands a leading tilde (~) to the user's home directory.
+func expandPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	if p == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Clean(home)
+		}
+	} else if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Clean(filepath.Join(home, p[2:]))
+		}
+	}
+	return filepath.Clean(p)
 }
 
 // isAbsPath rejects relative paths and paths containing null bytes.

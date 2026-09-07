@@ -1,0 +1,61 @@
+{{ define "compare_modal" }}
+<div class="modal-overlay" id="compareModal" onclick="closeCompareModal()">
+    <div class="modal compare-modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3>🔍 Side-by-Side Media Inspector</h3>
+            <button class="modal-close-btn" onclick="closeCompareModal()">✕</button>
+        </div>
+
+        <div class="compare-body">
+            <!-- Mode switch: Split Slider vs Difference Heatmap -->
+            <div class="compare-toolbar">
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-ghost active" id="btnModeSplit" onclick="setCompareMode('split')">↔️ Split Slider</button>
+                    <button class="btn btn-sm btn-ghost" id="btnModeDiff" onclick="setCompareMode('diff')">🔥 Difference Heatmap</button>
+                </div>
+            </div>
+
+            <!-- Visual Comparison Viewport -->
+            <div class="compare-viewport" id="compareViewport">
+                <!-- Split View Container -->
+                <div class="split-view-container" id="splitViewContainer">
+                    <img id="compareImgLeft" class="split-img left" alt="Original / Left file" />
+                    <div class="split-overlay-wrapper" id="splitOverlayWrapper">
+                        <img id="compareImgRight" class="split-img right" alt="Converted / Right file" />
+                    </div>
+                    <div class="split-handle" id="splitHandle">
+                        <div class="split-handle-line"></div>
+                        <div class="split-handle-knob">◀ ▶</div>
+                    </div>
+                </div>
+
+                <!-- Difference Heatmap Image -->
+                <div class="diff-view-container" id="diffViewContainer" style="display:none;">
+                    <div class="diff-loading-indicator" id="diffLoadingIndicator" style="display:none;">
+                        <div class="spinner"></div>
+                        <span>Generating difference heatmap...</span>
+                    </div>
+                    <div class="diff-error-msg" id="diffErrorMsg"></div>
+                    <img id="compareDiffImg" alt="Pixel Diff Heatmap" style="display:none;" />
+                </div>
+            </div>
+
+            <!-- Metadata Comparison Table -->
+            <div class="compare-meta-grid" id="compareMetaGrid">
+                <div class="meta-card" id="metaLeftCard">
+                    <h4>Left File</h4>
+                    <div class="meta-details" id="metaLeftDetails"></div>
+                </div>
+                <div class="meta-card diff-summary-card" id="metaDiffCard">
+                    <h4>Comparison Delta</h4>
+                    <div class="meta-details" id="metaDiffDetails"></div>
+                </div>
+                <div class="meta-card" id="metaRightCard">
+                    <h4>Right File</h4>
+                    <div class="meta-details" id="metaRightDetails"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{ end }}

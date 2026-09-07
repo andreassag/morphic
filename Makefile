@@ -1,5 +1,5 @@
-# Go targets
-.PHONY: build test run vet tidy hooks
+# Go & Docker targets
+.PHONY: build test run vet tidy hooks docker-up docker-down docker-logs docker-build dev
 
 tidy:
 	go mod tidy
@@ -8,7 +8,7 @@ build: tidy
 	go build -o ./bin/morphic ./cmd/morphic
 
 test:
-	go test ./...
+	go test -v ./...
 
 vet:
 	go vet ./...
@@ -19,3 +19,18 @@ hooks:
 
 run: build
 	./bin/morphic
+
+dev: build
+	DATABASE_URL="postgres://morphic:morphic_secret@localhost:5432/morphic?sslmode=disable" ./bin/morphic
+
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up -d --build
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f
