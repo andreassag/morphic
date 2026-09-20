@@ -152,5 +152,5 @@ func handleDupfinderDelete(c *gin.Context, pool *pgxpool.Pool) {
 		return
 	}
 
-	c.JSON(http.StatusOK, executeDeleteFiles(c.Request.Context(), pool, req.Files))
+	c.JSON(http.StatusOK, executeDeleteFiles(c.Request.Context(), pool, req.Files, "dupfinder"))
 }

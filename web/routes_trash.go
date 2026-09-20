@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/exterex/morphic/internal/database"
+	"github.com/exterex/morphic/internal/events"
 	"github.com/exterex/morphic/internal/shared"
 	"github.com/exterex/morphic/internal/trash"
 	"github.com/gin-gonic/gin"
@@ -19,7 +20,15 @@ func registerTrashRoutes(r *gin.Engine, pool *pgxpool.Pool) {
 			limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 			offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-			entries, total, err := database.ListAuditHistory(c.Request.Context(), pool, op, limit, offset)
+			var entries []database.AuditEntry
+			var total int64
+			var err error
+
+			if pool != nil {
+				entries, total, err = database.ListAuditHistory(c.Request.Context(), pool, op, limit, offset)
+			} else {
+				entries, total, err = trash.ListStandaloneTrash(op, limit, offset)
+			}
 			if err != nil {
 				respondError(c, http.StatusInternalServerError, "HISTORY_FAILED", err.Error())
 				return
@@ -46,6 +55,7 @@ func registerTrashRoutes(r *gin.Engine, pool *pgxpool.Pool) {
 				return
 			}
 
+			events.DefaultBus.Publish("trash", "restored", gin.H{"id": id})
 			c.JSON(http.StatusOK, gin.H{"status": "restored", "id": id})
 		})
 

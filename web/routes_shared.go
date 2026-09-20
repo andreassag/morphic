@@ -40,11 +40,13 @@ func handleBrowseDirectory(c *gin.Context) {
 		return
 	}
 
+	pathExists := true
 	browseDir := path
 	filterPrefix := ""
 
 	info, err := os.Stat(path)
 	if err != nil || !info.IsDir() {
+		pathExists = false
 		// If path doesn't exist as a directory, check parent directory for autocomplete matching
 		parentDir := filepath.Dir(path)
 		parentInfo, pErr := os.Stat(parentDir)
@@ -98,6 +100,7 @@ func handleBrowseDirectory(c *gin.Context) {
 		"current": browseDir,
 		"parent":  parentPtr,
 		"entries": dirs,
+		"exists":  pathExists,
 	})
 }
 

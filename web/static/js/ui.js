@@ -52,6 +52,13 @@ export function switchTab(tabId) {
     if (tabId !== 'converter' && convBulkBar) convBulkBar.style.display = 'none';
     if (tabId !== 'dupfinder' && dupBulkBar) dupBulkBar.style.display = 'none';
 
+    if (tabId === 'trash' && typeof window.loadTrashHistory === 'function') {
+        window.loadTrashHistory();
+    }
+    if (tabId === 'history' && typeof window.loadAuditHistory === 'function') {
+        window.loadAuditHistory();
+    }
+
     localStorage.setItem('morphic_active_tab', tabId);
 }
 

@@ -1,0 +1,53 @@
+{{ define "history_tab" }}
+<div class="tab-content" id="tab-history">
+<div class="container">
+
+    <div class="card">
+        <div class="card-header-flex">
+            <div class="card-title"><span class="icon">📜</span> Audit History</div>
+            <div class="toolbar-actions">
+                <select id="historyFilterOp" onchange="loadAuditHistory()">
+                    <option value="">All Operations</option>
+                    <option value="convert">Conversions</option>
+                    <option value="sort">Organize / Sort</option>
+                    <option value="rename">Renames</option>
+                    <option value="delete">Deletions (Safe Trash)</option>
+                </select>
+                <button class="btn btn-ghost btn-sm" onclick="loadAuditHistory()">🔄 Refresh</button>
+            </div>
+        </div>
+        <p style="font-size:13px;color:var(--text-dim);margin-top:6px;">
+            Comprehensive activity log of all operations: media conversions, automated sorting, file renames, and deletions.
+        </p>
+    </div>
+
+    <!-- History Table -->
+    <div class="card">
+        <div class="table-responsive" style="max-height:650px;overflow:auto;">
+            <table class="data-table" id="historyTable">
+                <thead>
+                    <tr>
+                        <th style="width:60px;">Preview</th>
+                        <th>Time</th>
+                        <th>Source</th>
+                        <th>Action</th>
+                        <th>Original Path</th>
+                        <th>Destination / Trash Path</th>
+                        <th>Size</th>
+                        <th>Status</th>
+                        <th style="text-align:right;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTableBody">
+                    <tr>
+                        <td colspan="9" style="text-align:center;padding:24px;color:var(--text-dim);">Loading audit history…</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination-controls" id="historyPagination"></div>
+    </div>
+
+</div>
+</div>
+{{ end }}

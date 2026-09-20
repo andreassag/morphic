@@ -34,11 +34,11 @@ type MediaItemMeta struct {
 
 // ComparisonResult encapsulates metadata comparison between two files.
 type ComparisonResult struct {
-	Left       MediaItemMeta `json:"left"`
-	Right      MediaItemMeta `json:"right"`
-	SizeDiff   int64         `json:"size_diff"`
-	SizeDiffFmt string       `json:"size_diff_fmt"`
-	IsSameDim  bool          `json:"is_same_dimensions"`
+	Left        MediaItemMeta `json:"left"`
+	Right       MediaItemMeta `json:"right"`
+	SizeDiff    int64         `json:"size_diff"`
+	SizeDiffFmt string        `json:"size_diff_fmt"`
+	IsSameDim   bool          `json:"is_same_dimensions"`
 }
 
 // CompareMetadata reads and compares metadata between two media files.

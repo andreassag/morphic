@@ -28,13 +28,17 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
+# Non-root user configuration (UID/GID default to 1000 to match host user permissions)
+ARG UID=1000
+ARG GID=1000
+
 # Create non-root app user
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN addgroup -g ${GID} -S appgroup && adduser -u ${UID} -S appuser -G appgroup
 
 COPY --from=builder --chown=appuser:appgroup /app/bin/morphic /usr/local/bin/morphic
 
 # Default media and safe trash mount directories
-RUN mkdir -p /media /app/data && chown -R appuser:appgroup /media /app/data
+RUN mkdir -p /media /app/data /app/data/trash && chown -R appuser:appgroup /media /app/data
 
 USER appuser
 
@@ -43,6 +47,7 @@ EXPOSE 8001
 ENV DATABASE_URL=""
 ENV TRASH_RETENTION_DAYS="30"
 ENV WATCH_POLL_INTERVAL_SECS="30"
+ENV MORPHIC_TRASH_DIR="/app/data/trash"
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8001/healthz || exit 1

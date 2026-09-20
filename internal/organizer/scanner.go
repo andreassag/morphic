@@ -2,14 +2,17 @@ package organizer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/exterex/morphic/internal/database"
 	"github.com/exterex/morphic/internal/events"
 	"github.com/exterex/morphic/internal/shared"
+	"github.com/exterex/morphic/internal/trash"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -244,6 +247,32 @@ func runExecute(ctx context.Context, job *ScanJob) {
 		for _, e := range job.SortPlan {
 			if e.Status == "done" {
 				job.Processed++
+				var size int64
+				if info, err := os.Stat(e.Destination); err == nil {
+					size = info.Size()
+				}
+				metaBytes, _ := json.Marshal(map[string]interface{}{
+					"source":    "organizer",
+					"mode":      "sort",
+					"operation": job.Operation,
+					"template":  job.Template,
+				})
+				entry := database.AuditEntry{
+					Operation:       "sort",
+					Source:          "organizer",
+					OriginalPath:    e.Source,
+					DestinationPath: e.Destination,
+					FileSize:        size,
+					Metadata:        metaBytes,
+					Reversible:      job.Operation == "move",
+					CreatedAt:       time.Now(),
+				}
+				if job.Pool != nil {
+					_, _ = database.LogAction(ctx, job.Pool, entry)
+				} else {
+					_ = trash.LogStandaloneAudit(entry)
+				}
+				events.DefaultBus.Publish("history", "new_entry", entry)
 			}
 		}
 		job.mu.Unlock()
@@ -253,6 +282,32 @@ func runExecute(ctx context.Context, job *ScanJob) {
 		for _, e := range job.RenamePlan {
 			if e.Status == "done" {
 				job.Processed++
+				var size int64
+				if info, err := os.Stat(e.Destination); err == nil {
+					size = info.Size()
+				}
+				metaBytes, _ := json.Marshal(map[string]interface{}{
+					"source":    "organizer",
+					"mode":      "rename",
+					"operation": job.Operation,
+					"template":  job.Template,
+				})
+				entry := database.AuditEntry{
+					Operation:       "rename",
+					Source:          "organizer",
+					OriginalPath:    e.Source,
+					DestinationPath: e.Destination,
+					FileSize:        size,
+					Metadata:        metaBytes,
+					Reversible:      job.Operation == "move",
+					CreatedAt:       time.Now(),
+				}
+				if job.Pool != nil {
+					_, _ = database.LogAction(ctx, job.Pool, entry)
+				} else {
+					_ = trash.LogStandaloneAudit(entry)
+				}
+				events.DefaultBus.Publish("history", "new_entry", entry)
 			}
 		}
 		job.mu.Unlock()

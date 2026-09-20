@@ -7,6 +7,7 @@ import * as Converter from './converter.js';
 import * as Dupfinder from './dupfinder.js';
 import * as Organizer from './organizer.js';
 import * as Trash from './trash.js';
+import * as History from './history.js';
 import * as Settings from './settings.js';
 
 // Export functions to global scope for HTML inline handlers
@@ -40,6 +41,7 @@ window.dupToggleSelect = Dupfinder.dupToggleSelect;
 window.dupConfirmDelete = Dupfinder.dupConfirmDelete;
 window.dupCloseModal = Dupfinder.dupCloseModal;
 window.dupExecuteDelete = Dupfinder.dupExecuteDelete;
+window.dupDeleteSingle = Dupfinder.dupDeleteSingle;
 
 window.orgModeChanged = Organizer.orgModeChanged;
 window.orgStartPlan = Organizer.orgStartPlan;
@@ -49,6 +51,9 @@ window.orgCancelJob = Organizer.orgCancelJob;
 window.loadTrashHistory = Trash.loadTrashHistory;
 window.undoAuditAction = Trash.undoAuditAction;
 window.purgeExpiredTrash = Trash.purgeExpiredTrash;
+
+window.loadAuditHistory = History.loadAuditHistory;
+window.undoHistoryAction = History.undoHistoryAction;
 
 window.loadWatchFolders = Settings.loadWatchFolders;
 window.addWatchFolder = Settings.addWatchFolder;
@@ -64,12 +69,16 @@ async function resolveSmartMountPath(currentVal, folderName) {
         const subPath = `${base}/${folderName}`;
         try {
             const res = await fetch(`/api/browse?path=${encodeURIComponent(subPath)}`);
-            if (res.ok) return subPath;
+            if (res.ok) {
+                const data = await res.json();
+                if (data.exists !== false && data.current === subPath) return subPath;
+            }
         } catch (_) {}
     }
 
-    // Candidate container mount points
+    // Candidate container mount points to probe
     const candidates = [
+        `/mnt/d/storage/${folderName}`,
         `/mnt/d/${folderName}`,
         `/media/${folderName}`
     ];
@@ -77,17 +86,14 @@ async function resolveSmartMountPath(currentVal, folderName) {
     for (const cand of candidates) {
         try {
             const res = await fetch(`/api/browse?path=${encodeURIComponent(cand)}`);
-            if (res.ok) return cand;
+            if (res.ok) {
+                const data = await res.json();
+                if (data.exists !== false && data.current === cand) return cand;
+            }
         } catch (_) {}
     }
 
-    // Default mount fallback: probe mount roots to see which exists
-    try {
-        const resMnt = await fetch('/api/browse?path=/mnt/d');
-        if (resMnt.ok) return `/mnt/d/${folderName}`;
-    } catch (_) {}
-
-    return `/media/${folderName}`;
+    return '';
 }
 
 window.openNativeFolderExplorer = async function(prefix) {
@@ -100,10 +106,13 @@ window.openNativeFolderExplorer = async function(prefix) {
             const dirHandle = await window.showDirectoryPicker();
             if (dirHandle && dirHandle.name) {
                 const resolved = await resolveSmartMountPath(input?.value.trim(), dirHandle.name);
-                if (input) {
+                if (resolved && input) {
                     input.value = resolved;
                     UI.showToast(`Selected: ${resolved}`, 'info');
+                    return;
                 }
+                UI.showToast(`Browsing for folder: ${dirHandle.name}`, 'info');
+                await window.openBrowser(prefix);
                 return;
             }
         } catch (err) {
@@ -285,5 +294,6 @@ document.addEventListener('DOMContentLoaded', () => {
     Dupfinder.initDupfinder();
     Organizer.initOrganizer();
     Trash.initTrash();
+    History.initHistory();
     Settings.initSettings();
 });

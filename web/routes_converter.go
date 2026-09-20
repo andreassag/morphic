@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/exterex/morphic/internal/database"
 	"github.com/exterex/morphic/internal/events"
 	"github.com/exterex/morphic/internal/shared"
+	"github.com/exterex/morphic/internal/trash"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -233,11 +235,36 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 			result.OriginalSizeFmt = shared.FormatFileSize(origSize)
 			result.NewSizeFmt = shared.FormatFileSize(newSize)
 
+			// Log conversion to audit history
+			auditMetaBytes, _ := json.Marshal(map[string]interface{}{
+				"source":        "converter",
+				"target_ext":    targetExt,
+				"codec":         codec,
+				"original_size": origSize,
+				"new_size":      newSize,
+			})
+			auditEntry := database.AuditEntry{
+				Operation:       "convert",
+				Source:          "converter",
+				OriginalPath:    source,
+				DestinationPath: dest,
+				FileSize:        newSize,
+				Metadata:        auditMetaBytes,
+				Reversible:      false,
+				CreatedAt:       time.Now(),
+			}
+			if job.Pool != nil {
+				_, _ = database.LogAction(ctx, job.Pool, auditEntry)
+			} else {
+				_ = trash.LogStandaloneAudit(auditEntry)
+			}
+			events.DefaultBus.Publish("history", "new_entry", auditEntry)
+
 			if deleteOriginal && dest != "" {
 				absSrc, errSrc := filepath.Abs(source)
 				absDest, errDest := filepath.Abs(dest)
 				if errSrc == nil && errDest == nil && absSrc != absDest && newSize > 0 {
-					_ = executeDeleteFiles(ctx, job.Pool, []string{source})
+					_ = executeDeleteFiles(ctx, job.Pool, []string{source}, "converter")
 					result.SourceDeleted = true
 				}
 			}
@@ -309,7 +336,7 @@ func handleConverterDelete(c *gin.Context, pool *pgxpool.Pool) {
 		return
 	}
 
-	c.JSON(http.StatusOK, executeDeleteFiles(c.Request.Context(), pool, req.Files))
+	c.JSON(http.StatusOK, executeDeleteFiles(c.Request.Context(), pool, req.Files, "converter"))
 }
 
 func handleConverterCancel(c *gin.Context) {

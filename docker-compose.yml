@@ -2,9 +2,13 @@ name: morphic
 
 services:
   morphic:
+    mem_limit: 5g
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
     container_name: morphic-app
     restart: unless-stopped
     ports:
@@ -13,6 +17,7 @@ services:
       - DATABASE_URL=postgres://morphic:morphic_secret@postgres:5432/morphic?sslmode=disable
       - TRASH_RETENTION_DAYS=30
       - WATCH_POLL_INTERVAL_SECS=30
+      - MORPHIC_TRASH_DIR=/app/data/trash
     volumes:
       - morphic_data:/app/data
       - ./media:/media
@@ -28,6 +33,7 @@ services:
       start_period: 5s
 
   postgres:
+    mem_limit: 512m
     image: pgvector/pgvector:pg17
     container_name: morphic-db
     restart: unless-stopped

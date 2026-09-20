@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -194,3 +195,75 @@ func TestDupfinderScanEndpoint(t *testing.T) {
 	}
 }
 
+func TestDupfinderDeleteAndTrashHistory(t *testing.T) {
+	trashDir := t.TempDir()
+	t.Setenv("MORPHIC_TRASH_DIR", trashDir)
+
+	r := setupTestRouter(t)
+
+	tmp := t.TempDir()
+	dupFile := filepath.Join(tmp, "duplicate_photo.jpg")
+	content := []byte("image content here")
+	if err := os.WriteFile(dupFile, content, 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	// 1. Delete the file via /api/dupfinder/delete
+	body, _ := json.Marshal(map[string]interface{}{
+		"files": []string{dupFile},
+	})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/dupfinder/delete", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("dupfinder delete returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var delResp web.DeleteFilesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &delResp); err != nil {
+		t.Fatalf("failed to decode delete response: %v", err)
+	}
+	if len(delResp.Results) != 1 || delResp.Results[0].Status != "deleted" {
+		t.Fatalf("expected 1 deleted result, got %+v", delResp.Results)
+	}
+	auditID := delResp.Results[0].AuditID
+
+	// 2. Query /api/history to verify it appears in Safe Trash
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/api/history?operation=delete", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("history returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var histResp struct {
+		Entries []map[string]interface{} `json:"entries"`
+		Total   int64                    `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &histResp); err != nil {
+		t.Fatalf("failed to decode history response: %v", err)
+	}
+	if histResp.Total != 1 || len(histResp.Entries) != 1 {
+		t.Fatalf("expected 1 history entry, got total=%d, entries=%d", histResp.Total, len(histResp.Entries))
+	}
+
+	// 3. Restore the file via /api/history/:id/undo
+	undoURL := fmt.Sprintf("/api/history/%d/undo", auditID)
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("POST", undoURL, nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("undo returned %d, want %d (body: %s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// 4. Verify file restored to disk
+	restored, err := os.ReadFile(dupFile)
+	if err != nil {
+		t.Fatalf("restored file missing: %v", err)
+	}
+	if string(restored) != string(content) {
+		t.Errorf("content mismatch: got %q, want %q", restored, content)
+	}
+}

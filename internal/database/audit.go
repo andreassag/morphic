@@ -14,6 +14,7 @@ import (
 type AuditEntry struct {
 	ID              int64           `json:"id"`
 	Operation       string          `json:"operation"` // 'delete', 'convert', 'rename', 'sort'
+	Source          string          `json:"source,omitempty"`
 	OriginalPath    string          `json:"original_path"`
 	DestinationPath string          `json:"destination_path,omitempty"`
 	TrashPath       string          `json:"trash_path,omitempty"`
@@ -89,6 +90,7 @@ func GetAuditEntry(ctx context.Context, pool *pgxpool.Pool, id int64) (*AuditEnt
 		}
 		return nil, fmt.Errorf("getting audit entry %d: %w", id, err)
 	}
+	e.Source = extractSource(e.Metadata, e.Operation)
 	return &e, nil
 }
 
@@ -105,10 +107,7 @@ func MarkActionReversed(ctx context.Context, pool *pgxpool.Pool, id int64) error
 	`
 
 	_, err := pool.Exec(ctx, query, id)
-	if err != nil {
-		return fmt.Errorf("marking audit action %d reversed: %w", id, err)
-	}
-	return nil
+	return err
 }
 
 // ListAuditHistory lists recent audit events with optional operation filtering and pagination.
@@ -178,8 +177,30 @@ func ListAuditHistory(ctx context.Context, pool *pgxpool.Pool, operation string,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scanning audit entry: %w", err)
 		}
+		e.Source = extractSource(e.Metadata, e.Operation)
 		entries = append(entries, e)
 	}
 
 	return entries, total, nil
+}
+
+func extractSource(metadata json.RawMessage, operation string) string {
+	if len(metadata) > 0 {
+		var m struct {
+			Source string `json:"source"`
+		}
+		if err := json.Unmarshal(metadata, &m); err == nil && m.Source != "" {
+			return m.Source
+		}
+	}
+	switch operation {
+	case "delete":
+		return "dupfinder"
+	case "convert":
+		return "converter"
+	case "rename", "sort":
+		return "organizer"
+	default:
+		return "manual"
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/exterex/morphic/internal/database"
@@ -41,8 +42,21 @@ func GetRetentionDays() int {
 	return DefaultRetentionDays
 }
 
+// StandaloneMeta represents the metadata stored in meta.json for standalone mode.
+type StandaloneMeta struct {
+	ID           int64      `json:"id"`
+	Operation    string     `json:"operation"`
+	Source       string     `json:"source,omitempty"`
+	OriginalPath string     `json:"original_path"`
+	TrashPath    string     `json:"trash_path"`
+	FileSize     int64      `json:"file_size"`
+	CreatedAt    time.Time  `json:"created_at"`
+	Reversible   bool       `json:"reversible"`
+	ReversedAt   *time.Time `json:"reversed_at,omitempty"`
+}
+
 // MoveToTrash moves a file into the safe-trash store and logs an audit_log record.
-func MoveToTrash(ctx context.Context, pool *pgxpool.Pool, filePath string) (int64, string, int64, error) {
+func MoveToTrash(ctx context.Context, pool *pgxpool.Pool, filePath string, origin ...string) (int64, string, int64, error) {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return 0, "", 0, fmt.Errorf("reading file info: %w", err)
@@ -71,9 +85,15 @@ func MoveToTrash(ctx context.Context, pool *pgxpool.Pool, filePath string) (int6
 		}
 	}
 
+	sourceOrigin := "dupfinder"
+	if len(origin) > 0 && origin[0] != "" {
+		sourceOrigin = origin[0]
+	}
+
 	meta := map[string]interface{}{
 		"original_filename": filepath.Base(filePath),
 		"trashed_at":        time.Now().Format(time.RFC3339),
+		"source":            sourceOrigin,
 	}
 	metaBytes, _ := json.Marshal(meta)
 
@@ -88,16 +108,201 @@ func MoveToTrash(ctx context.Context, pool *pgxpool.Pool, filePath string) (int6
 	if err != nil {
 		slog.Error("failed to record audit entry for trashed file", "path", filePath, "err", err)
 	}
+	if auditID == 0 {
+		auditID = time.Now().UnixNano()
+	}
+
+	// Always write meta.json to destDir for resilience and standalone mode
+	metaFile := StandaloneMeta{
+		ID:           auditID,
+		Operation:    "delete",
+		Source:       sourceOrigin,
+		OriginalPath: filePath,
+		TrashPath:    targetPath,
+		FileSize:     size,
+		CreatedAt:    time.Now(),
+		Reversible:   true,
+	}
+	if mb, err := json.MarshalIndent(metaFile, "", "  "); err == nil {
+		_ = os.WriteFile(filepath.Join(destDir, "meta.json"), mb, 0644)
+	}
 
 	return auditID, targetPath, size, nil
 }
 
+// ListStandaloneTrash lists trashed files from local meta.json files when database is not available.
+func ListStandaloneTrash(operation string, limit, offset int) ([]database.AuditEntry, int64, error) {
+	trashDir := GetTrashDir()
+	entries, err := os.ReadDir(trashDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, 0, nil
+		}
+		return nil, 0, fmt.Errorf("reading trash dir: %w", err)
+	}
+
+	var all []database.AuditEntry
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		metaPath := filepath.Join(trashDir, e.Name(), "meta.json")
+		data, err := os.ReadFile(metaPath)
+		if err != nil {
+			continue
+		}
+		var m StandaloneMeta
+		if err := json.Unmarshal(data, &m); err != nil {
+			continue
+		}
+		if operation != "" && m.Operation != operation {
+			continue
+		}
+
+		src := m.Source
+		if src == "" {
+			if m.Operation == "delete" {
+				src = "dupfinder"
+			} else {
+				src = m.Operation
+			}
+		}
+		metaBytes, _ := json.Marshal(map[string]interface{}{
+			"original_filename": filepath.Base(m.OriginalPath),
+			"source":            src,
+		})
+
+		all = append(all, database.AuditEntry{
+			ID:           m.ID,
+			Operation:    m.Operation,
+			Source:       src,
+			OriginalPath: m.OriginalPath,
+			TrashPath:    m.TrashPath,
+			FileSize:     m.FileSize,
+			Metadata:     metaBytes,
+			Reversible:   m.Reversible,
+			ReversedAt:   m.ReversedAt,
+			CreatedAt:    m.CreatedAt,
+		})
+	}
+
+	// Also read standalone non-trash audit entries if operation is not specifically "delete"
+	if operation != "delete" {
+		auditDir := filepath.Join(filepath.Dir(trashDir), "audit")
+		if auditEntries, err := os.ReadDir(auditDir); err == nil {
+			for _, e := range auditEntries {
+				if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+					continue
+				}
+				data, err := os.ReadFile(filepath.Join(auditDir, e.Name()))
+				if err != nil {
+					continue
+				}
+				var item database.AuditEntry
+				if err := json.Unmarshal(data, &item); err != nil {
+					continue
+				}
+				if operation != "" && item.Operation != operation {
+					continue
+				}
+				if item.Source == "" {
+					item.Source = item.Operation
+				}
+				all = append(all, item)
+			}
+		}
+	}
+
+	// Sort by CreatedAt desc
+	for i := 0; i < len(all)-1; i++ {
+		for j := i + 1; j < len(all); j++ {
+			if all[j].CreatedAt.After(all[i].CreatedAt) {
+				all[i], all[j] = all[j], all[i]
+			}
+		}
+	}
+
+	total := int64(len(all))
+	if offset > len(all) {
+		return nil, total, nil
+	}
+	end := offset + limit
+	if limit <= 0 || end > len(all) {
+		end = len(all)
+	}
+
+	return all[offset:end], total, nil
+}
+
+// LogStandaloneAudit records a non-trash audit log event (e.g. convert, sort, rename) in standalone mode.
+func LogStandaloneAudit(entry database.AuditEntry) error {
+	auditDir := filepath.Join(filepath.Dir(GetTrashDir()), "audit")
+	if err := os.MkdirAll(auditDir, 0755); err != nil {
+		return err
+	}
+	if entry.ID == 0 {
+		entry.ID = time.Now().UnixNano()
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now()
+	}
+	filename := fmt.Sprintf("%d.json", entry.ID)
+	data, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(auditDir, filename), data, 0644)
+}
+
 // Restore moves a trashed file back to its original location.
 func Restore(ctx context.Context, pool *pgxpool.Pool, auditID int64) error {
-	entry, err := database.GetAuditEntry(ctx, pool, auditID)
-	if err != nil {
-		return fmt.Errorf("retrieving audit entry: %w", err)
+	var entry *database.AuditEntry
+	var metaDir string
+	if pool != nil {
+		var err error
+		entry, err = database.GetAuditEntry(ctx, pool, auditID)
+		if err != nil {
+			return fmt.Errorf("retrieving audit entry: %w", err)
+		}
 	}
+
+	// Fallback to standalone trash metadata if entry was not found in DB
+	if entry == nil {
+		trashDir := GetTrashDir()
+		entries, err := os.ReadDir(trashDir)
+		if err == nil {
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				dir := filepath.Join(trashDir, e.Name())
+				metaPath := filepath.Join(dir, "meta.json")
+				data, err := os.ReadFile(metaPath)
+				if err != nil {
+					continue
+				}
+				var m StandaloneMeta
+				if err := json.Unmarshal(data, &m); err != nil {
+					continue
+				}
+				if m.ID == auditID {
+					entry = &database.AuditEntry{
+						ID:           m.ID,
+						Operation:    m.Operation,
+						OriginalPath: m.OriginalPath,
+						TrashPath:    m.TrashPath,
+						FileSize:     m.FileSize,
+						Reversible:   m.Reversible,
+						ReversedAt:   m.ReversedAt,
+						CreatedAt:    m.CreatedAt,
+					}
+					metaDir = dir
+					break
+				}
+			}
+		}
+	}
+
 	if entry == nil {
 		return fmt.Errorf("audit entry %d not found", auditID)
 	}
@@ -120,19 +325,34 @@ func Restore(ctx context.Context, pool *pgxpool.Pool, auditID int64) error {
 	}
 
 	// Move file back
-	err = os.Rename(entry.TrashPath, entry.OriginalPath)
+	err := os.Rename(entry.TrashPath, entry.OriginalPath)
 	if err != nil {
 		if err := copyAndDelete(entry.TrashPath, entry.OriginalPath); err != nil {
 			return fmt.Errorf("restoring file: %w", err)
 		}
 	}
 
-	// Remove empty trash parent dir
-	_ = os.Remove(filepath.Dir(entry.TrashPath))
+	now := time.Now()
+	if metaDir != "" {
+		metaPath := filepath.Join(metaDir, "meta.json")
+		if data, err := os.ReadFile(metaPath); err == nil {
+			var m StandaloneMeta
+			if json.Unmarshal(data, &m) == nil {
+				m.ReversedAt = &now
+				if mb, err := json.MarshalIndent(m, "", "  "); err == nil {
+					_ = os.WriteFile(metaPath, mb, 0644)
+				}
+			}
+		}
+	} else {
+		_ = os.RemoveAll(filepath.Dir(entry.TrashPath))
+	}
 
-	// Mark action as reversed in database
-	if err := database.MarkActionReversed(ctx, pool, auditID); err != nil {
-		return fmt.Errorf("updating audit record: %w", err)
+	// Mark action as reversed in database if pool is available
+	if pool != nil {
+		if err := database.MarkActionReversed(ctx, pool, auditID); err != nil {
+			return fmt.Errorf("updating audit record: %w", err)
+		}
 	}
 
 	return nil
@@ -218,10 +438,15 @@ func copyAndDelete(src, dst string) error {
 	defer out.Close()
 
 	if _, err := io.Copy(out, in); err != nil {
+		_ = os.Remove(dst)
 		return err
 	}
 	_ = in.Close()
 	_ = out.Close()
 
-	return os.Remove(src)
+	if err := os.Remove(src); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	return nil
 }

@@ -197,25 +197,172 @@ export function dupCloseModal() {
 export async function dupExecuteDelete() {
     if (selectedDupFiles.size === 0) return;
 
+    const filesToDelete = Array.from(selectedDupFiles);
     try {
         const res = await fetch('/api/dupfinder/delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: Array.from(selectedDupFiles) })
+            body: JSON.stringify({ files: filesToDelete })
         });
 
-        if (!res.ok) throw new Error('Deletion failed');
-        const data = await res.json();
-        showToast(`Moved ${selectedDupFiles.size} duplicates to Safe Trash (Freed: ${data.total_freed_formatted})`, 'success');
-        dupCloseModal();
-        selectedDupFiles.clear();
-        updateDupBulkBar();
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error?.message || 'Deletion failed');
+        }
 
-        // Refresh scan
-        dupStartScan();
+        const data = await res.json();
+        dupCloseModal();
+
+        const deleted = (data.results || []).filter(r => r.status === 'deleted').map(r => r.path);
+        if (deleted.length > 0) {
+            removeDeletedFromView(deleted);
+            showToast(`Moved ${deleted.length} duplicate(s) to Safe Trash (Freed: ${data.total_freed_formatted || '0 B'})`, 'success');
+        }
+
+        const failed = (data.results || []).filter(r => r.status !== 'deleted');
+        if (failed.length > 0) {
+            const sampleReason = failed.find(r => r.error)?.error ||
+                (failed.some(r => r.status === 'permission_denied') ? 'permission denied: check folder write permissions' : '');
+            const msg = sampleReason
+                ? `${failed.length} file(s) could not be deleted (${sampleReason})`
+                : `${failed.length} file(s) could not be deleted`;
+            showToast(msg, 'warning');
+        }
     } catch (err) {
         showToast(err.message, 'error');
     }
+}
+
+export async function dupDeleteSingle(path) {
+    if (!path) return;
+    const filename = path.split('/').pop() || path;
+    if (!confirm(`Move "${filename}" to Safe Trash?`)) return;
+
+    try {
+        const res = await fetch('/api/dupfinder/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files: [path] })
+        });
+
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error?.message || 'Deletion failed');
+        }
+
+        const data = await res.json();
+        const deleted = (data.results || []).filter(r => r.status === 'deleted').map(r => r.path);
+        if (deleted.length > 0) {
+            removeDeletedFromView(deleted);
+            showToast(`Moved "${filename}" to Safe Trash (Freed: ${data.total_freed_formatted || '0 B'})`, 'success');
+        } else {
+            const firstFail = (data.results || []).find(r => r.status !== 'deleted');
+            const errMsg = firstFail?.error ||
+                (firstFail?.status === 'permission_denied' ? 'Permission denied (check folder write permissions)' : 'File could not be deleted');
+            showToast(errMsg, 'error');
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function removeDeletedFromView(deletedPaths) {
+    if (!deletedPaths || deletedPaths.length === 0 || !currentResults) return;
+    const deletedSet = new Set(deletedPaths);
+
+    deletedPaths.forEach(p => selectedDupFiles.delete(p));
+
+    const filterGroupList = (groupList, type) => {
+        const remainingGroups = [];
+        groupList.forEach(grp => {
+            const items = grp.items || grp;
+            const remainingItems = items.filter(item => !deletedSet.has(item.path));
+
+            if (remainingItems.length < 2) {
+                // Duplicate group resolved: remove entire card from view
+                items.forEach(item => {
+                    const row = Array.from(document.querySelectorAll('.dup-item-row')).find(el => el.dataset.path === item.path);
+                    if (row) {
+                        const card = row.closest('.dup-group-card');
+                        if (card && card.parentNode) {
+                            card.parentNode.removeChild(card);
+                        }
+                    }
+                });
+            } else {
+                grp.items = remainingItems;
+                remainingGroups.push(grp);
+
+                // Remove deleted row(s) from DOM
+                deletedPaths.forEach(p => {
+                    const row = Array.from(document.querySelectorAll('.dup-item-row')).find(el => el.dataset.path === p);
+                    if (row && row.parentNode) {
+                        row.parentNode.removeChild(row);
+                    }
+                });
+
+                // Update group header file count
+                const firstRow = Array.from(document.querySelectorAll('.dup-item-row')).find(el => el.dataset.path === remainingItems[0]?.path);
+                if (firstRow) {
+                    const card = firstRow.closest('.dup-group-card');
+                    const headerSpan = card?.querySelector('.dup-group-header span');
+                    if (headerSpan) {
+                        headerSpan.textContent = `Group (${remainingItems.length} ${type} files)`;
+                    }
+                }
+            }
+        });
+        return remainingGroups;
+    };
+
+    if (currentResults.image_groups) {
+        currentResults.image_groups = filterGroupList(currentResults.image_groups, 'image');
+    }
+    if (currentResults.video_groups) {
+        currentResults.video_groups = filterGroupList(currentResults.video_groups, 'video');
+    }
+
+    // Recalculate potential space savings
+    let totalSavings = 0;
+    const allGroups = [...(currentResults.image_groups || []), ...(currentResults.video_groups || [])];
+    allGroups.forEach(grp => {
+        const items = grp.items || grp;
+        if (items.length > 1) {
+            let maxSize = 0;
+            let groupSum = 0;
+            items.forEach(item => {
+                const s = item.file_size || 0;
+                groupSum += s;
+                if (s > maxSize) maxSize = s;
+            });
+            totalSavings += (groupSum - maxSize);
+        }
+    });
+    currentResults.space_savings = totalSavings;
+
+    const totalGroups = (currentResults.image_groups?.length || 0) + (currentResults.video_groups?.length || 0);
+
+    const title = document.getElementById('dupTitle');
+    const summary = document.getElementById('dupSummary');
+    const noResultsDiv = document.getElementById('dupNoResults');
+
+    if (totalGroups === 0) {
+        if (noResultsDiv) noResultsDiv.style.display = 'block';
+        if (title) title.textContent = 'Found 0 Duplicate Groups';
+        if (summary) summary.innerHTML = '';
+    } else {
+        if (noResultsDiv) noResultsDiv.style.display = 'none';
+        if (title) title.textContent = `Found ${totalGroups} Duplicate Group(s)`;
+        if (summary) {
+            summary.innerHTML = `
+                <div style="font-size:13px;color:var(--text-dim);margin-bottom:12px;">
+                    Total Potential Space Savings: <strong style="color:var(--success);">${formatFileSize(totalSavings)}</strong>
+                </div>
+            `;
+        }
+    }
+
+    updateDupBulkBar();
 }
 
 function updateDupProgress(payload) {
@@ -328,7 +475,7 @@ function renderDupResults(data) {
             const safePath = item.path.replace(/'/g, "\\'");
 
             html += `
-                <div class="dup-item-row">
+                <div class="dup-item-row" data-path="${item.path}">
                     <input type="checkbox" class="dup-file-cb" data-path="${item.path}" ${isChecked} onchange="dupToggleSelect('${safePath}', this.checked)" />
                     <img class="dup-thumb" src="${thumbUrl}" alt="Thumbnail" onclick="openPreview('${safePath}')" />
                     <div class="dup-info">
@@ -339,7 +486,10 @@ function renderDupResults(data) {
                             <span>⚖️ ${item.file_size_formatted}</span>
                         </div>
                     </div>
-                    <button class="btn btn-ghost btn-sm" onclick="openPreview('${safePath}')">👁️ View</button>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <button class="btn btn-ghost btn-sm" onclick="openPreview('${safePath}')">👁️ View</button>
+                        <button class="btn btn-danger btn-sm" onclick="dupDeleteSingle('${safePath}')" title="Move this duplicate to Safe Trash">🗑️ Trash</button>
+                    </div>
                 </div>
             `;
         });

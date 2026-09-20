@@ -11,6 +11,7 @@ let formatsData = null;
 let currentConvertJobId = null;
 let showFullPaths = false;
 let currentSortBy = 'name';
+let conversionResults = new Map(); // path -> ConversionResult
 
 export function initConverter() {
     loadFormats();
@@ -127,6 +128,13 @@ function renderScanResults(data) {
         `;
     }
 
+    conversionResults.clear();
+    const batchSummary = document.getElementById('convBatchSummary');
+    if (batchSummary) {
+        batchSummary.style.display = 'none';
+        batchSummary.innerHTML = '';
+    }
+
     renderExtFilterChips();
     selectedFiles.clear();
     convSortResults(currentSortBy);
@@ -209,6 +217,7 @@ function renderTableRows() {
             <thead>
                 <tr>
                     <th style="width:36px;"><input type="checkbox" id="convSelectAll" onchange="convToggleSelectAll(this.checked)" /></th>
+                    <th style="width:48px;">Preview</th>
                     <th>File</th>
                     <th>Extension</th>
                     <th>Size</th>
@@ -219,26 +228,76 @@ function renderTableRows() {
             <tbody>
     `;
 
-    visibleFiles.forEach((file, idx) => {
+    visibleFiles.forEach((file) => {
         const isChecked = selectedFiles.has(file.path) ? 'checked' : '';
         const rawName = file.name || file.filename || file.path.split('/').pop();
         const displayName = showFullPaths ? file.path : rawName;
-        const sizeStr = file.size_formatted || formatFileSize(file.size || 0);
+        const initialSizeStr = file.size_formatted || formatFileSize(file.size || 0);
+
+        let sizeHtml = `<span>${initialSizeStr}</span>`;
+        let statusHtml = `<span class="badge" style="background:var(--surface3);color:var(--text-dim);">Ready</span>`;
+        let actionsHtml = `<button class="btn btn-ghost btn-sm" onclick="openPreview('${file.path.replace(/'/g, "\\'")}')">👁️ View</button>`;
+
+        if (conversionResults.has(file.path)) {
+            const res = conversionResults.get(file.path);
+            if (res.status === 'ok') {
+                const origBytes = res.original_size || file.size || 0;
+                const newBytes = res.new_size || 0;
+                const origFmt = res.original_size_fmt || formatFileSize(origBytes);
+                const newFmt = res.new_size_fmt || formatFileSize(newBytes);
+                let pctBadge = '';
+                if (origBytes > 0 && newBytes > 0) {
+                    const diff = origBytes - newBytes;
+                    const pct = Math.round((diff / origBytes) * 100);
+                    if (diff > 0) {
+                        pctBadge = `<span class="badge badge-success" style="font-size:11px;margin-left:4px;">-${pct}%</span>`;
+                    } else if (diff < 0) {
+                        pctBadge = `<span class="badge badge-warning" style="font-size:11px;margin-left:4px;">+${Math.abs(pct)}%</span>`;
+                    } else {
+                        pctBadge = `<span class="badge badge-ghost" style="font-size:11px;margin-left:4px;">0%</span>`;
+                    }
+                }
+                sizeHtml = `<span>${origFmt} → <strong>${newFmt}</strong> ${pctBadge}</span>`;
+                statusHtml = `<span class="badge badge-success">✓ Done</span>`;
+                actionsHtml = `
+                    <button class="btn btn-ghost btn-sm" onclick="openPreview('${(res.destination || file.path).replace(/'/g, "\\'")}')" title="Preview converted file">👁️ Converted</button>
+                    ${res.destination ? `<button class="btn btn-ghost btn-sm" onclick="openCompareModal('${file.path.replace(/'/g, "\\'")}', '${res.destination.replace(/'/g, "\\'")}')" title="Compare original vs converted">🔍 Compare</button>` : ''}
+                `;
+            } else if (res.status === 'error') {
+                statusHtml = `<span class="badge badge-danger">✕ Failed</span>`;
+                sizeHtml = `
+                    <span>${initialSizeStr}</span>
+                    <div style="font-size:11px;color:var(--danger);margin-top:2px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(res.error || 'Conversion error').replace(/"/g, '&quot;')}">
+                        ${res.error || 'Conversion failed'}
+                    </div>
+                `;
+            }
+        }
+
+        const safePath = file.path.replace(/"/g, '&quot;');
+        const safeAttrPath = file.path.replace(/'/g, "\\'");
 
         html += `
-            <tr id="convRow_${idx}">
-                <td><input type="checkbox" class="conv-file-cb" data-path="${file.path}" ${isChecked} onchange="convToggleSelectFile('${file.path}', this.checked)" /></td>
+            <tr data-path="${safePath}">
+                <td><input type="checkbox" class="conv-file-cb" data-path="${safePath}" ${isChecked} onchange="convToggleSelectFile('${safeAttrPath}', this.checked)" /></td>
                 <td>
-                    <span style="cursor:pointer;font-weight:600;" onclick="openPreview('${file.path}')" title="${file.path}">
+                    <img class="trash-thumb"
+                         src="/api/thumbnail?path=${encodeURIComponent(file.path)}"
+                         alt="Thumbnail"
+                         loading="lazy"
+                         onclick="openPreview('${safeAttrPath}')"
+                         onerror="this.onerror=null;this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'44\\' height=\\'44\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'%238b949e\\' stroke-width=\\'2\\' stroke-linecap=\\'round\\' stroke-linejoin=\\'round\\'><rect width=\\'18\\' height=\\'18\\' x=\\'3\\' y=\\'3\\' rx=\\'2\\'/><circle cx=\\'9\\' cy=\\'9\\' r=\\'2\\'/><path d=\\'m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\\'/></svg>';"
+                         style="cursor:pointer;" />
+                </td>
+                <td>
+                    <span style="cursor:pointer;font-weight:600;" onclick="openPreview('${safeAttrPath}')" title="${safePath}">
                         ${displayName}
                     </span>
                 </td>
                 <td><span class="badge badge-info">${file.ext}</span></td>
-                <td>${sizeStr}</td>
-                <td id="convStatus_${idx}"><span class="badge" style="background:var(--surface3);color:var(--text-dim);">Ready</span></td>
-                <td id="convActions_${idx}">
-                    <button class="btn btn-ghost btn-sm" onclick="openPreview('${file.path}')">👁️ View</button>
-                </td>
+                <td class="conv-size-cell">${sizeHtml}</td>
+                <td class="conv-status-cell">${statusHtml}</td>
+                <td class="conv-actions-cell">${actionsHtml}</td>
             </tr>
         `;
     });
@@ -347,6 +406,13 @@ export function convOnBatchContainerChange() {
 export async function convConvertBatch() {
     if (selectedFiles.size === 0) return;
 
+    conversionResults.clear();
+    const batchSummary = document.getElementById('convBatchSummary');
+    if (batchSummary) {
+        batchSummary.style.display = 'none';
+        batchSummary.innerHTML = '';
+    }
+
     let targetExt = '';
     let codec = '';
     const hwaccel = document.getElementById('convHWAccel')?.value || 'auto';
@@ -429,6 +495,15 @@ export async function convDeleteBatch() {
     }
 }
 
+function findRowByPath(tableDiv, filePath) {
+    if (!tableDiv) return null;
+    const rows = tableDiv.querySelectorAll('tr[data-path]');
+    for (const r of rows) {
+        if (r.getAttribute('data-path') === filePath) return r;
+    }
+    return null;
+}
+
 function updateConvertProgress(payload) {
     const bar = document.getElementById('convProgressBar');
     const pct = document.getElementById('convProgressPct');
@@ -439,25 +514,58 @@ function updateConvertProgress(payload) {
     if (pct) pct.textContent = `${progress}%`;
     if (msg) msg.textContent = payload.current_file ? `Converting: ${payload.current_file.split('/').pop()}` : 'Converting...';
 
+    const tableDiv = document.getElementById('convFileTable');
+
     // Update table rows dynamically
-    if (payload.results) {
+    if (payload.results && Array.isArray(payload.results)) {
         payload.results.forEach(res => {
-            const idx = scanResults.findIndex(f => f.path === res.source);
-            if (idx !== -1) {
-                const statusCell = document.getElementById(`convStatus_${idx}`);
-                const actionCell = document.getElementById(`convActions_${idx}`);
+            conversionResults.set(res.source, res);
 
-                if (statusCell && res.status === 'ok') {
-                    statusCell.innerHTML = `<span class="badge badge-success">Done (${res.new_size_fmt})</span>`;
-                } else if (statusCell && res.status === 'error') {
-                    statusCell.innerHTML = `<span class="badge badge-danger">Error</span>`;
-                }
+            const row = findRowByPath(tableDiv, res.source);
+            if (row) {
+                const statusCell = row.querySelector('.conv-status-cell');
+                const sizeCell = row.querySelector('.conv-size-cell');
+                const actionCell = row.querySelector('.conv-actions-cell');
 
-                if (actionCell && res.destination) {
-                    actionCell.innerHTML = `
-                        <button class="btn btn-ghost btn-sm" onclick="openPreview('${res.destination}')" title="Preview converted file">👁️ Converted</button>
-                        <button class="btn btn-ghost btn-sm" onclick="openCompareModal('${res.source}', '${res.destination}')" title="Compare original vs converted">🔍 Compare</button>
-                    `;
+                if (res.status === 'ok') {
+                    const origBytes = res.original_size || 0;
+                    const newBytes = res.new_size || 0;
+                    const origFmt = res.original_size_fmt || formatFileSize(origBytes);
+                    const newFmt = res.new_size_fmt || formatFileSize(newBytes);
+                    let pctBadge = '';
+                    if (origBytes > 0 && newBytes > 0) {
+                        const diff = origBytes - newBytes;
+                        const pctVal = Math.round((diff / origBytes) * 100);
+                        if (diff > 0) {
+                            pctBadge = `<span class="badge badge-success" style="font-size:11px;margin-left:4px;">-${pctVal}%</span>`;
+                        } else if (diff < 0) {
+                            pctBadge = `<span class="badge badge-warning" style="font-size:11px;margin-left:4px;">+${Math.abs(pctVal)}%</span>`;
+                        } else {
+                            pctBadge = `<span class="badge badge-ghost" style="font-size:11px;margin-left:4px;">0%</span>`;
+                        }
+                    }
+
+                    if (statusCell) statusCell.innerHTML = `<span class="badge badge-success">✓ Done</span>`;
+                    if (sizeCell) sizeCell.innerHTML = `<span>${origFmt} → <strong>${newFmt}</strong> ${pctBadge}</span>`;
+                    if (actionCell) {
+                        const safeDest = (res.destination || res.source).replace(/'/g, "\\'");
+                        const safeSrc = res.source.replace(/'/g, "\\'");
+                        actionCell.innerHTML = `
+                            <button class="btn btn-ghost btn-sm" onclick="openPreview('${safeDest}')" title="Preview converted file">👁️ Converted</button>
+                            ${res.destination ? `<button class="btn btn-ghost btn-sm" onclick="openCompareModal('${safeSrc}', '${safeDest}')" title="Compare original vs converted">🔍 Compare</button>` : ''}
+                        `;
+                    }
+                } else if (res.status === 'error') {
+                    if (statusCell) statusCell.innerHTML = `<span class="badge badge-danger">✕ Failed</span>`;
+                    if (sizeCell) {
+                        const origText = sizeCell.querySelector('span')?.textContent || sizeCell.textContent;
+                        sizeCell.innerHTML = `
+                            <span>${origText}</span>
+                            <div style="font-size:11px;color:var(--danger);margin-top:2px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(res.error || 'Conversion error').replace(/"/g, '&quot;')}">
+                                ${res.error || 'Conversion failed'}
+                            </div>
+                        `;
+                    }
                 }
             }
         });
@@ -469,8 +577,73 @@ function finishConversion(payload) {
     if (progressCard) {
         setTimeout(() => { progressCard.style.display = 'none'; }, 1000);
     }
-    showToast('Batch conversion complete!', 'success');
     updateConvertProgress(payload);
+
+    // Calculate batch summary stats
+    const allResults = Array.from(conversionResults.values());
+    if (allResults.length > 0) {
+        let okCount = 0;
+        let errCount = 0;
+        let totalOrigBytes = 0;
+        let totalNewBytes = 0;
+
+        allResults.forEach(r => {
+            if (r.status === 'ok') {
+                okCount++;
+                totalOrigBytes += (r.original_size || 0);
+                totalNewBytes += (r.new_size || 0);
+            } else if (r.status === 'error') {
+                errCount++;
+            }
+        });
+
+        const batchSummary = document.getElementById('convBatchSummary');
+        if (batchSummary) {
+            batchSummary.style.display = 'block';
+            const freedBytes = totalOrigBytes - totalNewBytes;
+            const freedFmt = formatFileSize(Math.abs(freedBytes));
+            const pct = totalOrigBytes > 0 ? Math.round((freedBytes / totalOrigBytes) * 100) : 0;
+            const isSaved = freedBytes >= 0;
+
+            batchSummary.innerHTML = `
+                <div class="card" style="background:var(--surface2);border:1px solid var(--border);padding:14px 18px;border-radius:var(--radius-md);">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;">
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <span style="font-size:24px;">${errCount === 0 ? '🎉' : '⚠️'}</span>
+                            <div>
+                                <div style="font-weight:700;font-size:15px;color:var(--text-primary);">
+                                    Conversion Complete
+                                </div>
+                                <div style="font-size:13px;color:var(--text-dim);margin-top:2px;">
+                                    <span style="color:var(--accent-success);font-weight:600;">${okCount} succeeded</span>${errCount > 0 ? `, <span style="color:var(--danger);font-weight:600;">${errCount} failed</span>` : ''} of ${allResults.length} file(s)
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;">
+                            <div style="text-align:right;">
+                                <div style="font-size:11px;text-transform:uppercase;color:var(--text-dim);letter-spacing:0.5px;font-weight:600;">${isSaved ? 'Freed Space' : 'Size Change'}</div>
+                                <div style="font-size:16px;font-weight:700;color:${isSaved ? 'var(--accent-success)' : 'var(--accent-warning)'};">
+                                    ${isSaved ? '-' : '+'}${freedFmt}
+                                    <span class="badge ${isSaved ? 'badge-success' : 'badge-warning'}" style="font-size:12px;vertical-align:middle;margin-left:4px;">
+                                        ${isSaved ? '-' : '+'}${Math.abs(pct)}%
+                                    </span>
+                                </div>
+                            </div>
+                            <div style="border-left:1px solid var(--border);height:32px;"></div>
+                            <div style="text-align:right;">
+                                <div style="font-size:11px;text-transform:uppercase;color:var(--text-dim);letter-spacing:0.5px;font-weight:600;">Original → Converted</div>
+                                <div style="font-size:13px;color:var(--text-secondary);font-weight:500;">
+                                    ${formatFileSize(totalOrigBytes)} → ${formatFileSize(totalNewBytes)}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    showToast('Batch conversion complete!', 'success');
 }
 
 function cancelConversionUI() {
