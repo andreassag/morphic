@@ -254,6 +254,85 @@ func LogStandaloneAudit(entry database.AuditEntry) error {
 	return os.WriteFile(filepath.Join(auditDir, filename), data, 0644)
 }
 
+// LogStandaloneOperation records a bulk operation event in standalone mode.
+func LogStandaloneOperation(op database.AuditOperation) error {
+	opsDir := filepath.Join(filepath.Dir(GetTrashDir()), "operations")
+	if err := os.MkdirAll(opsDir, 0755); err != nil {
+		return err
+	}
+	if op.ID == 0 {
+		op.ID = time.Now().UnixNano()
+	}
+	if op.CreatedAt.IsZero() {
+		op.CreatedAt = time.Now()
+	}
+	filename := fmt.Sprintf("%d.json", op.ID)
+	data, err := json.MarshalIndent(op, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(opsDir, filename), data, 0644)
+}
+
+// ListStandaloneOperations lists bulk operations in standalone mode.
+func ListStandaloneOperations(operation string, limit, offset int) ([]database.AuditOperation, int64, error) {
+	opsDir := filepath.Join(filepath.Dir(GetTrashDir()), "operations")
+	entries, err := os.ReadDir(opsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, 0, nil
+		}
+		return nil, 0, fmt.Errorf("reading operations dir: %w", err)
+	}
+
+	var all []database.AuditOperation
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(opsDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var item database.AuditOperation
+		if err := json.Unmarshal(data, &item); err != nil {
+			continue
+		}
+		if operation != "" && item.Operation != operation {
+			continue
+		}
+		all = append(all, item)
+	}
+
+	// Sort by CreatedAt desc
+	for i := 0; i < len(all)-1; i++ {
+		for j := i + 1; j < len(all); j++ {
+			if all[j].CreatedAt.After(all[i].CreatedAt) {
+				all[i], all[j] = all[j], all[i]
+			}
+		}
+	}
+
+	total := int64(len(all))
+	if offset > len(all) {
+		return nil, total, nil
+	}
+	end := offset + limit
+	if limit <= 0 || end > len(all) {
+		end = len(all)
+	}
+
+	return all[offset:end], total, nil
+}
+
+// ListSafeTrash returns deleted files specifically for the Safe Trash view.
+func ListSafeTrash(ctx context.Context, pool *pgxpool.Pool, limit, offset int) ([]database.AuditEntry, int64, error) {
+	if pool != nil {
+		return database.ListAuditHistory(ctx, pool, "delete", limit, offset)
+	}
+	return ListStandaloneTrash("delete", limit, offset)
+}
+
 // Restore moves a trashed file back to its original location.
 func Restore(ctx context.Context, pool *pgxpool.Pool, auditID int64) error {
 	var entry *database.AuditEntry

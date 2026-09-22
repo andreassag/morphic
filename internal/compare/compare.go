@@ -9,7 +9,10 @@ import (
 	"image/jpeg"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/disintegration/imaging"
@@ -28,6 +31,7 @@ type MediaItemMeta struct {
 	Format      string    `json:"format"`
 	Duration    float64   `json:"duration,omitempty"`
 	DurationFmt string    `json:"duration_fmt,omitempty"`
+	FPS         float64   `json:"fps,omitempty"`
 	ModTime     time.Time `json:"mod_time"`
 	Type        string    `json:"type"` // "image" | "video"
 }
@@ -66,7 +70,7 @@ func CompareMetadata(ctx context.Context, leftPath, rightPath string) (*Comparis
 		Right:       *rightMeta,
 		SizeDiff:    diff,
 		SizeDiffFmt: diffFmt,
-		IsSameDim:   leftMeta.Width == rightMeta.Width && leftMeta.Height == rightMeta.Height,
+		IsSameDim:   leftMeta.Width == rightMeta.Width && leftMeta.Height == rightMeta.Height && leftMeta.Width > 0,
 	}, nil
 }
 
@@ -92,19 +96,102 @@ func extractMeta(ctx context.Context, path string) (*MediaItemMeta, error) {
 		Type:     mediaType,
 	}
 
-	img, err := shared.OpenImageFile(ctx, path)
-	if err == nil && img != nil {
-		bounds := img.Bounds()
-		meta.Width = bounds.Dx()
-		meta.Height = bounds.Dy()
-		meta.Resolution = fmt.Sprintf("%dx%d", meta.Width, meta.Height)
+	if mediaType == "video" {
+		probeVideoMeta(ctx, path, meta)
+	} else {
+		img, err := shared.OpenImageFile(ctx, path)
+		if err == nil && img != nil {
+			bounds := img.Bounds()
+			meta.Width = bounds.Dx()
+			meta.Height = bounds.Dy()
+			meta.Resolution = fmt.Sprintf("%dx%d", meta.Width, meta.Height)
+		}
 	}
 
 	return meta, nil
 }
 
+func probeVideoMeta(ctx context.Context, path string, meta *MediaItemMeta) {
+	candidates := shared.FFmpegCandidates()
+	if len(candidates) == 0 {
+		return
+	}
+	ffmpegBin := candidates[0]
+	probeBin := strings.Replace(ffmpegBin, "ffmpeg", "ffprobe", 1)
+
+	probeOut, err := exec.CommandContext(ctx, probeBin,
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=width,height,duration,r_frame_rate,codec_name",
+		"-of", "csv=p=0",
+		shared.PathForBin(probeBin, path),
+	).Output()
+	if err != nil {
+		return
+	}
+
+	parts := strings.Split(strings.TrimSpace(string(probeOut)), ",")
+	if len(parts) >= 1 {
+		meta.Width, _ = strconv.Atoi(parts[0])
+	}
+	if len(parts) >= 2 {
+		meta.Height, _ = strconv.Atoi(parts[1])
+	}
+	if meta.Width > 0 && meta.Height > 0 {
+		meta.Resolution = fmt.Sprintf("%dx%d", meta.Width, meta.Height)
+	}
+	if len(parts) >= 3 && parts[2] != "" && parts[2] != "N/A" {
+		meta.Duration, _ = strconv.ParseFloat(parts[2], 64)
+	}
+	if len(parts) >= 4 {
+		meta.FPS = parseFPS(parts[3])
+	}
+	if len(parts) >= 5 && parts[4] != "" {
+		meta.Format = fmt.Sprintf("%s (%s)", meta.Format, parts[4])
+	}
+	if meta.Duration > 0 {
+		meta.DurationFmt = formatDuration(meta.Duration)
+	}
+}
+
+func parseFPS(s string) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0/0" {
+		return 0
+	}
+	parts := strings.Split(s, "/")
+	if len(parts) == 2 {
+		num, err1 := strconv.ParseFloat(parts[0], 64)
+		den, err2 := strconv.ParseFloat(parts[1], 64)
+		if err1 == nil && err2 == nil && den > 0 {
+			return math.Round((num/den)*100) / 100
+		}
+	}
+	f, _ := strconv.ParseFloat(s, 64)
+	return math.Round(f*100) / 100
+}
+
+func formatDuration(seconds float64) string {
+	s := int(math.Round(seconds))
+	if s < 60 {
+		return fmt.Sprintf("%ds", s)
+	}
+	m := s / 60
+	s = s % 60
+	if m < 60 {
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	h := m / 60
+	m = m % 60
+	return fmt.Sprintf("%dh %dm %ds", h, m, s)
+}
+
 // GenerateDiffImage generates a visual difference image overlay between two images.
 func GenerateDiffImage(ctx context.Context, leftPath, rightPath string) ([]byte, error) {
+	if shared.IsVideo(leftPath) || shared.IsVideo(rightPath) {
+		return nil, fmt.Errorf("difference heatmap is only supported for static images")
+	}
+
 	imgA, err := shared.OpenImageFile(ctx, leftPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening left image: %w", err)

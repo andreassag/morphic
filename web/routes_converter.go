@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -284,7 +285,71 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 	job.CurrentFile = ""
 	job.Progress = 1.0
 	job.DoneAt = time.Now()
+
+	successCount := 0
+	failCount := 0
+	var totalOrigBytes int64
+	var totalNewBytes int64
+	for _, res := range job.Results {
+		if res.Status == "ok" {
+			successCount++
+			totalOrigBytes += res.OriginalSize
+			totalNewBytes += res.NewSize
+		} else {
+			failCount++
+		}
+	}
 	job.mu.Unlock()
+
+	if len(job.Results) > 0 {
+		status := "completed"
+		if failCount > 0 && successCount > 0 {
+			status = "partial"
+		} else if successCount == 0 {
+			status = "failed"
+		}
+
+		var summary string
+		if successCount > 0 {
+			summary = fmt.Sprintf("Converted %d file(s) to %s (%s → %s)",
+				successCount, targetExt,
+				shared.FormatFileSize(totalOrigBytes),
+				shared.FormatFileSize(totalNewBytes))
+			if failCount > 0 {
+				summary += fmt.Sprintf(" [%d failed]", failCount)
+			}
+		} else {
+			summary = fmt.Sprintf("Failed converting %d file(s) to %s", len(job.Results), targetExt)
+		}
+
+		bulkMetaBytes, _ := json.Marshal(map[string]interface{}{
+			"target_ext":  targetExt,
+			"codec":       codec,
+			"total_files": len(job.Results),
+			"successful":  successCount,
+			"failed":      failCount,
+			"orig_bytes":  totalOrigBytes,
+			"new_bytes":   totalNewBytes,
+		})
+
+		bulkOp := database.AuditOperation{
+			Operation: "convert",
+			Source:    "converter",
+			Summary:   summary,
+			ItemCount: len(job.Results),
+			TotalSize: totalNewBytes,
+			Status:    status,
+			Metadata:  bulkMetaBytes,
+			CreatedAt: time.Now(),
+		}
+
+		if job.Pool != nil {
+			_, _ = database.LogOperation(context.Background(), job.Pool, bulkOp)
+		} else {
+			_ = trash.LogStandaloneOperation(bulkOp)
+		}
+		events.DefaultBus.Publish("history", "operation_logged", bulkOp)
+	}
 
 	if job.Pool != nil {
 		_ = database.UpdateJobStatus(context.Background(), job.Pool, job.ID, "done", 1.0, "Conversion completed", "", job.Results)

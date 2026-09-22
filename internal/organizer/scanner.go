@@ -325,7 +325,44 @@ func runExecute(ctx context.Context, job *ScanJob) {
 		job.Message = "Execution completed"
 	}
 	job.DoneAt = time.Now()
+	processed := job.Processed
+	mode := job.Mode
+	operation := job.Operation
+	folder := job.Folder
 	job.mu.Unlock()
+
+	if processed > 0 {
+		var summary string
+		if mode == "sort" {
+			summary = fmt.Sprintf("Organized %d file(s) into date folders (%s)", processed, operation)
+		} else {
+			summary = fmt.Sprintf("Renamed %d file(s) (%s)", processed, operation)
+		}
+
+		bulkMetaBytes, _ := json.Marshal(map[string]interface{}{
+			"mode":      mode,
+			"operation": operation,
+			"processed": processed,
+			"folder":    folder,
+		})
+
+		bulkOp := database.AuditOperation{
+			Operation: mode,
+			Source:    "organizer",
+			Summary:   summary,
+			ItemCount: processed,
+			Status:    "completed",
+			Metadata:  bulkMetaBytes,
+			CreatedAt: time.Now(),
+		}
+
+		if job.Pool != nil {
+			_, _ = database.LogOperation(context.Background(), job.Pool, bulkOp)
+		} else {
+			_ = trash.LogStandaloneOperation(bulkOp)
+		}
+		events.DefaultBus.Publish("history", "operation_logged", bulkOp)
+	}
 
 	if job.Pool != nil {
 		_ = database.UpdateJobStatus(context.Background(), job.Pool, job.ID, string(job.Status), job.Progress, job.Message, job.Error, map[string]interface{}{

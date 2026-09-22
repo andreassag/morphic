@@ -36,7 +36,7 @@ export async function loadAuditHistory() {
         if (entries.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="9" style="text-align:center;padding:32px;color:var(--text-dim);">No audit entries found.</td>
+                    <td colspan="7" style="text-align:center;padding:32px;color:var(--text-dim);">No audit entries found.</td>
                 </tr>
             `;
             return;
@@ -45,104 +45,67 @@ export async function loadAuditHistory() {
         let html = '';
         entries.forEach(item => {
             const timeStr = item.created_at ? new Date(item.created_at).toLocaleString() : '-';
-            const isReversed = !!item.reversed_at;
-            const origPath = item.original_path || '-';
-            const destPath = item.destination_path || item.trash_path || '-';
-            const origFilename = origPath.split('/').pop() || origPath;
-            const destFilename = destPath.split('/').pop() || destPath;
-
-            // Determine preview path
-            const previewPath = (item.operation === 'delete' && !isReversed)
-                ? (item.trash_path || item.original_path || '')
-                : (item.destination_path || item.original_path || item.trash_path || '');
-            const safePreviewPath = previewPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-
-            // Source badge
-            const rawSource = (item.source || (item.operation === 'delete' ? 'dupfinder' : (item.operation === 'convert' ? 'converter' : 'organizer'))).toLowerCase();
-            let sourceBadge = '';
-            if (rawSource.includes('dupfinder')) {
-                sourceBadge = '<span class="badge badge-primary">Dupfinder</span>';
-            } else if (rawSource.includes('convert')) {
-                sourceBadge = '<span class="badge badge-warning">Converter</span>';
-            } else if (rawSource.includes('organize') || rawSource.includes('sort') || rawSource.includes('rename')) {
-                sourceBadge = '<span class="badge badge-info">Organizer</span>';
-            } else {
-                sourceBadge = `<span class="badge badge-secondary">${rawSource}</span>`;
+            const op = item.operation || 'unknown';
+            const source = item.source || '-';
+            const summary = item.summary || `${op} operation`;
+            const itemCount = typeof item.item_count === 'number' && item.item_count >= 0 ? item.item_count : '-';
+            
+            // Format size / impact
+            let sizeImpact = '-';
+            if (item.total_size && item.total_size > 0) {
+                sizeImpact = formatFileSize(item.total_size);
+            } else if (item.metadata && typeof item.metadata === 'object') {
+                if (item.metadata.freed_bytes) {
+                    sizeImpact = formatFileSize(item.metadata.freed_bytes);
+                } else if (item.metadata.target_format) {
+                    sizeImpact = `Target: ${item.metadata.target_format.toUpperCase()}`;
+                }
             }
 
-            // Operation badge
+            // Operation badge styling
             let opBadgeClass = 'badge-info';
-            if (item.operation === 'delete') opBadgeClass = 'badge-danger';
-            else if (item.operation === 'convert') opBadgeClass = 'badge-warning';
-            else if (item.operation === 'sort' || item.operation === 'rename') opBadgeClass = 'badge-success';
+            if (op === 'delete' || op === 'purge') opBadgeClass = 'badge-danger';
+            else if (op === 'convert') opBadgeClass = 'badge-warning';
+            else if (op === 'sort' || op === 'rename' || op === 'restore') opBadgeClass = 'badge-success';
 
-            // Preview cell
-            let previewCell = '<span style="color:var(--text-dim);">-</span>';
-            if (previewPath && previewPath !== 'Unknown' && previewPath !== '-') {
-                const thumbUrl = `/api/thumbnail?path=${encodeURIComponent(previewPath)}`;
-                previewCell = `
-                    <div style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;">
-                        <img class="trash-thumb" src="${thumbUrl}" alt="Thumb" loading="lazy"
-                             onclick="openPreview('${safePreviewPath}')"
-                             onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
-                        <div style="display:none;width:44px;height:44px;border-radius:var(--radius-sm);background:var(--surface3);align-items:center;justify-content:center;font-size:18px;cursor:pointer;border:1px solid var(--border);"
-                             onclick="openPreview('${safePreviewPath}')" title="Inspect">🖼️</div>
-                    </div>
-                `;
+            // Source badge styling
+            let sourceBadge = `<span class="badge badge-secondary">${source}</span>`;
+            const lowerSource = source.toLowerCase();
+            if (lowerSource.includes('dupfinder')) {
+                sourceBadge = '<span class="badge badge-primary">Dupfinder</span>';
+            } else if (lowerSource.includes('convert')) {
+                sourceBadge = '<span class="badge badge-warning">Converter</span>';
+            } else if (lowerSource.includes('organize') || lowerSource.includes('sort') || lowerSource.includes('rename')) {
+                sourceBadge = '<span class="badge badge-info">Organizer</span>';
+            } else if (lowerSource.includes('trash')) {
+                sourceBadge = '<span class="badge badge-danger">Safe-Trash</span>';
             }
 
-            // Status badge
+            // Status badge styling
             let statusBadge = '<span class="badge badge-info">Completed</span>';
-            if (item.operation === 'delete') {
-                statusBadge = isReversed 
-                    ? '<span class="badge badge-success">Restored</span>' 
-                    : '<span class="badge badge-danger">In Safe-Trash</span>';
+            const lowerStatus = (item.status || 'completed').toLowerCase();
+            if (lowerStatus === 'failed' || lowerStatus === 'error') {
+                statusBadge = '<span class="badge badge-danger">Failed</span>';
+            } else if (lowerStatus === 'partial') {
+                statusBadge = '<span class="badge badge-warning">Partial</span>';
+            } else if (lowerStatus === 'completed' || lowerStatus === 'success') {
+                statusBadge = '<span class="badge badge-success">Completed</span>';
             }
-
-            // Actions cell
-            let actionsHtml = `<div style="display:flex;gap:6px;justify-content:flex-end;align-items:center;">`;
-            if (previewPath && previewPath !== 'Unknown' && previewPath !== '-') {
-                actionsHtml += `<button class="btn btn-ghost btn-sm" onclick="openPreview('${safePreviewPath}')" title="Inspect preview">👁️ View</button>`;
-            }
-            if (item.operation === 'delete' && !isReversed) {
-                actionsHtml += `<button class="btn btn-primary btn-sm" onclick="undoHistoryAction(${item.id})" title="Restore to original location">↩️ Restore</button>`;
-            }
-            actionsHtml += `</div>`;
 
             html += `
                 <tr>
-                    <td>${previewCell}</td>
                     <td style="white-space:nowrap;font-size:12px;color:var(--text-dim);">${timeStr}</td>
+                    <td><span class="badge ${opBadgeClass}">${op}</span></td>
                     <td>${sourceBadge}</td>
-                    <td><span class="badge ${opBadgeClass}">${item.operation}</span></td>
-                    <td title="${origPath}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${origFilename}</td>
-                    <td title="${destPath}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim);">${destFilename}</td>
-                    <td>${item.file_size ? formatFileSize(item.file_size) : '-'}</td>
+                    <td title="${summary}" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${summary}</td>
+                    <td style="font-weight:600;">${itemCount}</td>
+                    <td style="color:var(--text-dim);">${sizeImpact}</td>
                     <td>${statusBadge}</td>
-                    <td style="text-align:right;">${actionsHtml}</td>
                 </tr>
             `;
         });
 
         tbody.innerHTML = html;
-    } catch (err) {
-        showToast(err.message, 'error');
-    }
-}
-
-export async function undoHistoryAction(id) {
-    try {
-        const res = await fetch(`/api/history/${id}/undo`, { method: 'POST' });
-        if (!res.ok) {
-            const errData = await res.json();
-            throw new Error(errData.error?.message || 'Restore failed');
-        }
-
-        showToast('File successfully restored to original location!', 'success');
-        loadAuditHistory();
-        if (typeof window.loadTrashHistory === 'function') {
-            window.loadTrashHistory();
-        }
     } catch (err) {
         showToast(err.message, 'error');
     }

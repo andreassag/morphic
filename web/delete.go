@@ -2,11 +2,15 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/exterex/morphic/internal/database"
 	"github.com/exterex/morphic/internal/events"
 	"github.com/exterex/morphic/internal/shared"
 	"github.com/exterex/morphic/internal/trash"
@@ -33,6 +37,7 @@ type DeleteFilesResponse struct {
 func executeDeleteFiles(ctx context.Context, pool *pgxpool.Pool, files []string, origin ...string) DeleteFilesResponse {
 	var results []DeleteResult
 	totalFreed := int64(0)
+	deletedCount := 0
 
 	sourceOrigin := "dupfinder"
 	if len(origin) > 0 && origin[0] != "" {
@@ -73,6 +78,7 @@ func executeDeleteFiles(ctx context.Context, pool *pgxpool.Pool, files []string,
 			}
 		} else {
 			totalFreed += size
+			deletedCount++
 			results = append(results, DeleteResult{
 				Path:      fp,
 				Status:    "deleted",
@@ -86,6 +92,46 @@ func executeDeleteFiles(ctx context.Context, pool *pgxpool.Pool, files []string,
 				"source": sourceOrigin,
 			})
 		}
+	}
+
+	// Record bulk operation for audit history
+	if len(files) > 0 {
+		status := "completed"
+		if deletedCount == 0 {
+			status = "failed"
+		} else if deletedCount < len(files) {
+			status = "partial"
+		}
+
+		summary := fmt.Sprintf("Safe-trashed %d file(s) (freed %s)", deletedCount, shared.FormatFileSize(totalFreed))
+		if deletedCount < len(files) {
+			summary += fmt.Sprintf(" [%d failed]", len(files)-deletedCount)
+		}
+
+		metaBytes, _ := json.Marshal(map[string]interface{}{
+			"requested": len(files),
+			"deleted":   deletedCount,
+			"freed":     totalFreed,
+			"source":    sourceOrigin,
+		})
+
+		op := database.AuditOperation{
+			Operation: "delete",
+			Source:    sourceOrigin,
+			Summary:   summary,
+			ItemCount: deletedCount,
+			TotalSize: totalFreed,
+			Status:    status,
+			Metadata:  metaBytes,
+			CreatedAt: time.Now(),
+		}
+
+		if pool != nil {
+			_, _ = database.LogOperation(ctx, pool, op)
+		} else {
+			_ = trash.LogStandaloneOperation(op)
+		}
+		events.DefaultBus.Publish("history", "operation_logged", op)
 	}
 
 	return DeleteFilesResponse{

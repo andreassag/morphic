@@ -267,3 +267,101 @@ func TestDupfinderDeleteAndTrashHistory(t *testing.T) {
 		t.Errorf("content mismatch: got %q, want %q", restored, content)
 	}
 }
+
+func TestTrashAndHistorySeparation(t *testing.T) {
+	trashDir := t.TempDir()
+	t.Setenv("MORPHIC_TRASH_DIR", trashDir)
+
+	r := setupTestRouter(t)
+
+	tmp := t.TempDir()
+	dupFile := filepath.Join(tmp, "trash_test_file.png")
+	if err := os.WriteFile(dupFile, []byte("fake png content"), 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	// 1. Delete file
+	delBody, _ := json.Marshal(map[string]interface{}{
+		"files": []string{dupFile},
+	})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/dupfinder/delete", bytes.NewReader(delBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete failed: %d", w.Code)
+	}
+
+	// 2. Safe Trash endpoint GET /api/trash should return individual deleted file
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/api/trash", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("trash returned %d, want %d", w.Code, http.StatusOK)
+	}
+	var trashResp struct {
+		Entries []map[string]interface{} `json:"entries"`
+		Total   int64                    `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &trashResp); err != nil {
+		t.Fatalf("failed to decode /api/trash response: %v", err)
+	}
+	if trashResp.Total < 1 || len(trashResp.Entries) < 1 {
+		t.Fatalf("expected at least 1 entry in /api/trash, got %d", trashResp.Total)
+	}
+	entry := trashResp.Entries[0]
+	if entry["original_path"] != dupFile {
+		t.Errorf("expected original_path=%q, got %v", dupFile, entry["original_path"])
+	}
+
+	// 3. Audit History endpoint GET /api/history should return bulk operation
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/api/history", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("history returned %d, want %d", w.Code, http.StatusOK)
+	}
+	var histResp struct {
+		Entries []map[string]interface{} `json:"entries"`
+		Total   int64                    `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &histResp); err != nil {
+		t.Fatalf("failed to decode /api/history response: %v", err)
+	}
+	if histResp.Total < 1 || len(histResp.Entries) < 1 {
+		t.Fatalf("expected at least 1 entry in /api/history, got %d", histResp.Total)
+	}
+	histOp := histResp.Entries[0]
+	if histOp["operation"] != "delete" {
+		t.Errorf("expected bulk delete operation, got %v", histOp["operation"])
+	}
+	if histOp["summary"] == nil || histOp["summary"] == "" {
+		t.Errorf("expected summary in bulk audit operation, got %v", histOp["summary"])
+	}
+}
+
+func TestMediaCompareAndDiff(t *testing.T) {
+	r := setupTestRouter(t)
+
+	tmp := t.TempDir()
+	v1 := filepath.Join(tmp, "video1.mp4")
+	v2 := filepath.Join(tmp, "video2.mp4")
+	_ = os.WriteFile(v1, []byte("fake mp4 data 1"), 0o644)
+	_ = os.WriteFile(v2, []byte("fake mp4 data 2"), 0o644)
+
+	// 1. Missing paths should fail
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/media/compare?left=", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing paths, got %d", w.Code)
+	}
+
+	// 2. Diff on video files should reject with error
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", fmt.Sprintf("/api/media/diff?left=%s&right=%s", v1, v2), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 DIFF_FAILED for video diff, got %d", w.Code)
+	}
+}

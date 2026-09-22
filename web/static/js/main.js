@@ -53,7 +53,6 @@ window.undoAuditAction = Trash.undoAuditAction;
 window.purgeExpiredTrash = Trash.purgeExpiredTrash;
 
 window.loadAuditHistory = History.loadAuditHistory;
-window.undoHistoryAction = History.undoHistoryAction;
 
 window.loadWatchFolders = Settings.loadWatchFolders;
 window.addWatchFolder = Settings.addWatchFolder;

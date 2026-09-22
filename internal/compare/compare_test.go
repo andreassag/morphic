@@ -64,3 +64,36 @@ func TestGenerateDiffImage_differentImages(t *testing.T) {
 		t.Error("expected non-empty JPEG diff image data")
 	}
 }
+
+func TestGenerateDiffImage_videoRejection(t *testing.T) {
+	tmpDir := t.TempDir()
+	v1 := filepath.Join(tmpDir, "test1.mp4")
+	v2 := filepath.Join(tmpDir, "test2.mp4")
+	_ = os.WriteFile(v1, []byte("fake video content 1"), 0644)
+	_ = os.WriteFile(v2, []byte("fake video content 2"), 0644)
+
+	_, err := compare.GenerateDiffImage(context.Background(), v1, v2)
+	if err == nil {
+		t.Error("expected error when running GenerateDiffImage on video files")
+	}
+}
+
+func TestCompareMetadata_videoFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	v1 := filepath.Join(tmpDir, "sample.mp4")
+	v2 := filepath.Join(tmpDir, "sample.mkv")
+	_ = os.WriteFile(v1, []byte("fake video 1"), 0644)
+	_ = os.WriteFile(v2, []byte("fake video 2 larger"), 0644)
+
+	res, err := compare.CompareMetadata(context.Background(), v1, v2)
+	if err != nil {
+		t.Fatalf("CompareMetadata failed on video files: %v", err)
+	}
+
+	if res.Left.Type != "video" {
+		t.Errorf("expected left type 'video', got %s", res.Left.Type)
+	}
+	if res.Right.Type != "video" {
+		t.Errorf("expected right type 'video', got %s", res.Right.Type)
+	}
+}

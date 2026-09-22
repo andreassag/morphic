@@ -14,7 +14,7 @@ export async function loadTrashHistory() {
     if (!tbody) return;
 
     try {
-        const url = `/api/history?operation=delete&limit=100`;
+        const url = `/api/trash?limit=100`;
         const res = await fetch(url);
         if (!res.ok) throw new Error('Failed to load safe trash');
 

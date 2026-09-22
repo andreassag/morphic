@@ -9,15 +9,17 @@
                 <select id="historyFilterOp" onchange="loadAuditHistory()">
                     <option value="">All Operations</option>
                     <option value="convert">Conversions</option>
+                    <option value="delete">Safe-Trash Deletions</option>
                     <option value="sort">Organize / Sort</option>
                     <option value="rename">Renames</option>
-                    <option value="delete">Deletions (Safe Trash)</option>
+                    <option value="restore">Restorations</option>
+                    <option value="purge">Trash Purges</option>
                 </select>
                 <button class="btn btn-ghost btn-sm" onclick="loadAuditHistory()">🔄 Refresh</button>
             </div>
         </div>
         <p style="font-size:13px;color:var(--text-dim);margin-top:6px;">
-            Comprehensive activity log of all operations: media conversions, automated sorting, file renames, and deletions.
+            High-level audit log of bulk operations: media conversions, safe-trash deletions, date sorting, batch renames, and restorations.
         </p>
     </div>
 
@@ -27,20 +29,18 @@
             <table class="data-table" id="historyTable">
                 <thead>
                     <tr>
-                        <th style="width:60px;">Preview</th>
-                        <th>Time</th>
-                        <th>Source</th>
-                        <th>Action</th>
-                        <th>Original Path</th>
-                        <th>Destination / Trash Path</th>
-                        <th>Size</th>
-                        <th>Status</th>
-                        <th style="text-align:right;">Actions</th>
+                        <th style="width:160px;">Time</th>
+                        <th style="width:110px;">Operation</th>
+                        <th style="width:110px;">Source</th>
+                        <th>Summary</th>
+                        <th style="width:90px;">Files</th>
+                        <th style="width:140px;">Size / Impact</th>
+                        <th style="width:100px;">Status</th>
                     </tr>
                 </thead>
                 <tbody id="historyTableBody">
                     <tr>
-                        <td colspan="9" style="text-align:center;padding:24px;color:var(--text-dim);">Loading audit history…</td>
+                        <td colspan="7" style="text-align:center;padding:24px;color:var(--text-dim);">Loading audit history…</td>
                     </tr>
                 </tbody>
             </table>

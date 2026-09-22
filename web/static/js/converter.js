@@ -274,6 +274,15 @@ function renderTableRows() {
             }
         }
 
+        let previewPath = file.path;
+        if (conversionResults.has(file.path)) {
+            const res = conversionResults.get(file.path);
+            if (res.status === 'ok' && res.destination) {
+                previewPath = res.destination;
+            }
+        }
+        const safePreviewAttrPath = previewPath.replace(/'/g, "\\'");
+
         const safePath = file.path.replace(/"/g, '&quot;');
         const safeAttrPath = file.path.replace(/'/g, "\\'");
 
@@ -282,15 +291,16 @@ function renderTableRows() {
                 <td><input type="checkbox" class="conv-file-cb" data-path="${safePath}" ${isChecked} onchange="convToggleSelectFile('${safeAttrPath}', this.checked)" /></td>
                 <td>
                     <img class="trash-thumb"
-                         src="/api/thumbnail?path=${encodeURIComponent(file.path)}"
+                         src="/api/thumbnail?path=${encodeURIComponent(previewPath)}"
                          alt="Thumbnail"
                          loading="lazy"
-                         onclick="openPreview('${safeAttrPath}')"
+                         onclick="openPreview('${safePreviewAttrPath}')"
                          onerror="this.onerror=null;this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'44\\' height=\\'44\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'%238b949e\\' stroke-width=\\'2\\' stroke-linecap=\\'round\\' stroke-linejoin=\\'round\\'><rect width=\\'18\\' height=\\'18\\' x=\\'3\\' y=\\'3\\' rx=\\'2\\'/><circle cx=\\'9\\' cy=\\'9\\' r=\\'2\\'/><path d=\\'m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\\'/></svg>';"
-                         style="cursor:pointer;" />
+                         style="cursor:pointer;"
+                         title="${previewPath !== file.path ? 'Preview converted file' : 'Preview original'}" />
                 </td>
                 <td>
-                    <span style="cursor:pointer;font-weight:600;" onclick="openPreview('${safeAttrPath}')" title="${safePath}">
+                    <span style="cursor:pointer;font-weight:600;" onclick="openPreview('${safePreviewAttrPath}')" title="${safePath}">
                         ${displayName}
                     </span>
                 </td>
@@ -554,6 +564,17 @@ function updateConvertProgress(payload) {
                             <button class="btn btn-ghost btn-sm" onclick="openPreview('${safeDest}')" title="Preview converted file">👁️ Converted</button>
                             ${res.destination ? `<button class="btn btn-ghost btn-sm" onclick="openCompareModal('${safeSrc}', '${safeDest}')" title="Compare original vs converted">🔍 Compare</button>` : ''}
                         `;
+                    }
+
+                    // Update thumbnail image and preview triggers to point to the newly converted file
+                    if (res.destination) {
+                        const safeDest = res.destination.replace(/'/g, "\\'");
+                        const thumbImg = row.querySelector('img.trash-thumb');
+                        if (thumbImg) {
+                            thumbImg.src = `/api/thumbnail?path=${encodeURIComponent(res.destination)}`;
+                            thumbImg.setAttribute('onclick', `openPreview('${safeDest}')`);
+                            thumbImg.title = 'Preview converted file';
+                        }
                     }
                 } else if (res.status === 'error') {
                     if (statusCell) statusCell.innerHTML = `<span class="badge badge-danger">✕ Failed</span>`;
