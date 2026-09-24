@@ -487,15 +487,15 @@ func ConvertVideo(ctx context.Context, source, targetExt, codec, hwaccel, output
 		br = probeVideoBitrate(ctx, source, bin)
 	}
 
-	cmd := buildVideoCmd(bin, source, dest, encoder, av1CRF, br)
-	out, err2 := exec.CommandContext(ctx, cmd[0], cmd[1:]...).CombinedOutput()
+	args := buildVideoCmd(bin, source, dest, encoder, av1CRF, br)
+	out, err2 := exec.CommandContext(ctx, bin, args...).CombinedOutput()
 	if err2 != nil {
 		// If hardware encoder failed, try software encoder fallback
 		swEncoder, swErr := getVideoEncoder(ctx, codec, "")
 		if swErr == nil && swEncoder != encoder {
 			slog.Warn("hardware video encoder failed during conversion, retrying with software encoder", "hw_encoder", encoder, "sw_encoder", swEncoder, "err", strings.TrimSpace(string(out)))
-			cmdSw := buildVideoCmd(bin, source, dest, swEncoder, av1CRF, br)
-			outSw, errSw := exec.CommandContext(ctx, cmdSw[0], cmdSw[1:]...).CombinedOutput()
+			argsSw := buildVideoCmd(bin, source, dest, swEncoder, av1CRF, br)
+			outSw, errSw := exec.CommandContext(ctx, bin, argsSw...).CombinedOutput()
 			if errSw == nil {
 				return dest, nil
 			}
@@ -508,12 +508,12 @@ func ConvertVideo(ctx context.Context, source, targetExt, codec, hwaccel, output
 }
 
 func buildVideoCmd(bin, source, dest, encoder string, av1CRF int, br int64) []string {
-	cmd := []string{bin, "-y", "-i", shared.PathForBin(bin, source), "-c:v", encoder, "-c:a", "aac"}
+	args := []string{"-y", "-i", shared.PathForBin(bin, source), "-c:v", encoder, "-c:a", "aac"}
 
 	isAV1 := strings.Contains(encoder, "av1")
 	if isAV1 {
 		// AV1 requires even dimensions for YUV 4:2:0
-		cmd = append(cmd, "-vf", "crop=trunc(iw/2)*2:trunc(ih/2)*2")
+		args = append(args, "-vf", "crop=trunc(iw/2)*2:trunc(ih/2)*2")
 	}
 
 	switch encoder {
@@ -522,36 +522,36 @@ func buildVideoCmd(bin, source, dest, encoder string, av1CRF int, br int64) []st
 		if av1CRF >= 10 && av1CRF <= 63 {
 			crf = av1CRF
 		}
-		cmd = append(cmd, "-preset", "8", "-crf", fmt.Sprintf("%d", crf))
+		args = append(args, "-preset", "8", "-crf", fmt.Sprintf("%d", crf))
 	case "libaom-av1":
 		crf := 35
 		if av1CRF >= 10 && av1CRF <= 63 {
 			crf = av1CRF
 		}
-		cmd = append(cmd, "-cpu-used", "4", "-crf", fmt.Sprintf("%d", crf))
+		args = append(args, "-cpu-used", "4", "-crf", fmt.Sprintf("%d", crf))
 	case "av1_nvenc", "av1_qsv", "av1_amf", "av1_vaapi":
-		cmd = append(cmd, "-preset", "fast")
+		args = append(args, "-preset", "fast")
 	case "libvpx", "libvpx-vp9":
 		crf := 35
 		if av1CRF >= 10 && av1CRF <= 63 {
 			crf = av1CRF
 		}
-		cmd = append(cmd, "-crf", fmt.Sprintf("%d", crf), "-b:v", "0")
+		args = append(args, "-crf", fmt.Sprintf("%d", crf), "-b:v", "0")
 	case "libx265", "hevc_nvenc", "hevc_qsv", "hevc_amf", "hevc_vaapi":
-		cmd = append(cmd, "-preset", "fast")
+		args = append(args, "-preset", "fast")
 	default:
-		cmd = append(cmd, "-preset", "fast")
+		args = append(args, "-preset", "fast")
 	}
 
 	// For AV1, cap output bitrate at 65% of source to guarantee a size reduction.
 	if isAV1 && br > 0 {
 		maxrate := br * 65 / 100
-		cmd = append(cmd, "-maxrate", fmt.Sprintf("%d", maxrate),
+		args = append(args, "-maxrate", fmt.Sprintf("%d", maxrate),
 			"-bufsize", fmt.Sprintf("%d", br*2))
 	}
 
-	cmd = append(cmd, shared.PathForBin(bin, dest))
-	return cmd
+	args = append(args, shared.PathForBin(bin, dest))
+	return args
 }
 
 // ConvertFile is the high-level converter — routes to image or video handler.

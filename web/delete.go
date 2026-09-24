@@ -45,21 +45,22 @@ func executeDeleteFiles(ctx context.Context, pool *pgxpool.Pool, files []string,
 	}
 
 	for _, fp := range files {
-		if !isAbsPath(fp) {
-			results = append(results, DeleteResult{Path: fp, Status: "not_found", Error: "path must be absolute"})
+		safePath, err := shared.ValidateSafePath(fp)
+		if err != nil {
+			results = append(results, DeleteResult{Path: fp, Status: "not_found", Error: "invalid or protected path: " + err.Error()})
 			continue
 		}
-		info, err := os.Stat(fp)
+		info, err := os.Stat(safePath)
 		if err != nil {
-			results = append(results, DeleteResult{Path: fp, Status: "not_found", Error: "file not found"})
+			results = append(results, DeleteResult{Path: safePath, Status: "not_found", Error: "file not found"})
 			continue
 		}
 		if info.IsDir() {
-			results = append(results, DeleteResult{Path: fp, Status: "not_found", Error: "cannot delete directory"})
+			results = append(results, DeleteResult{Path: safePath, Status: "not_found", Error: "cannot delete directory"})
 			continue
 		}
 
-		auditID, _, size, err := trash.MoveToTrash(ctx, pool, fp, sourceOrigin)
+		auditID, _, size, err := trash.MoveToTrash(ctx, pool, safePath, sourceOrigin)
 		if err != nil {
 			slog.Error("failed to move file to trash", "path", fp, "err", err)
 			isPerm := errors.Is(err, os.ErrPermission) || os.IsPermission(err) || strings.Contains(strings.ToLower(err.Error()), "permission denied")

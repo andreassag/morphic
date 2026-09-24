@@ -138,12 +138,16 @@ func handleConverterConvert(c *gin.Context, pool *pgxpool.Pool) {
 		respondError(c, http.StatusBadRequest, "INVALID_TARGET_EXT", "Unsupported or invalid target_ext: "+req.TargetExt)
 		return
 	}
+	var validatedFiles []string
 	for _, f := range req.Files {
-		if !isAbsPath(f) {
-			respondError(c, http.StatusBadRequest, "INVALID_PATH", "Invalid file path: "+f)
+		safePath, err := shared.ValidateMediaFilePath(f)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, "INVALID_PATH", "Invalid or unsafe file path: "+f+" ("+err.Error()+")")
 			return
 		}
+		validatedFiles = append(validatedFiles, safePath)
 	}
+	req.Files = validatedFiles
 
 	av1CRF := 0
 	if req.AV1CRF != nil {

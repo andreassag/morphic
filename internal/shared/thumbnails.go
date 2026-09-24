@@ -88,6 +88,8 @@ func GenerateImageThumbnail(ctx context.Context, path string, size int) ([]byte,
 		return data, nil
 	}
 
+	// Note on CVE-2023-36308: Disintegration Imaging has an unpatched low-severity issue in imaging.Grayscale().
+	// Morphic only utilizes imaging.Open, imaging.Fit, imaging.Resize, and imaging.Save, with ffmpeg fallback.
 	img, err := imaging.Open(path, imaging.AutoOrientation(true))
 	if err != nil {
 		// Fallback to ffmpeg for formats that imaging can't decode.

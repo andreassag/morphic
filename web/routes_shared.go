@@ -34,25 +34,25 @@ func handleBrowseDirectory(c *gin.Context) {
 		rawPath = home
 	}
 
-	path := expandPath(rawPath)
-	if !isAbsPath(path) {
-		respondError(c, http.StatusBadRequest, "INVALID_PATH", "Invalid path")
+	safePath, err := shared.ValidateSafePath(rawPath)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_PATH", err.Error())
 		return
 	}
 
 	pathExists := true
-	browseDir := path
+	browseDir := safePath
 	filterPrefix := ""
 
-	info, err := os.Stat(path)
+	info, err := os.Stat(safePath)
 	if err != nil || !info.IsDir() {
 		pathExists = false
 		// If path doesn't exist as a directory, check parent directory for autocomplete matching
-		parentDir := filepath.Dir(path)
-		parentInfo, pErr := os.Stat(parentDir)
-		if pErr == nil && parentInfo.IsDir() {
-			browseDir = parentDir
-			filterPrefix = strings.ToLower(filepath.Base(path))
+		parentDir := filepath.Dir(safePath)
+		parentSafe, pErr := shared.ValidateSafeDirPath(parentDir)
+		if pErr == nil {
+			browseDir = parentSafe
+			filterPrefix = strings.ToLower(filepath.Base(safePath))
 		} else {
 			respondError(c, http.StatusBadRequest, "NOT_A_DIRECTORY", "Not a directory")
 			return
@@ -130,25 +130,23 @@ func handleBrowseNative(c *gin.Context) {
 }
 
 func handleThumbnail(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
+	rawPath := c.Query("path")
+	if rawPath == "" {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
+	filePath, err := shared.ValidateMediaFilePath(rawPath)
+	if err != nil {
 		c.Status(http.StatusBadRequest)
 		return
 	}
 
 	var data []byte
-	var err error
-
-	path = filepath.Clean(path)
-	if !isAbsPath(path) {
-		c.Status(http.StatusBadRequest)
-		return
-	}
-
-	if shared.IsVideo(path) {
-		data, err = shared.GenerateVideoThumbnail(c.Request.Context(), path, shared.DefaultThumbnailSize)
+	if shared.IsVideo(filePath) {
+		data, err = shared.GenerateVideoThumbnail(c.Request.Context(), filePath, shared.DefaultThumbnailSize)
 	} else {
-		data, err = shared.GenerateImageThumbnail(c.Request.Context(), path, shared.DefaultThumbnailSize)
+		data, err = shared.GenerateImageThumbnail(c.Request.Context(), filePath, shared.DefaultThumbnailSize)
 	}
 
 	if err != nil {
@@ -196,38 +194,25 @@ func handleSystemInfo(c *gin.Context) {
 
 // handleMedia serves a media file for full-size preview.
 func handleMedia(c *gin.Context) {
-	filePath := c.Query("path")
-	if filePath == "" {
+	rawPath := c.Query("path")
+	if rawPath == "" {
 		c.Status(http.StatusBadRequest)
 		return
 	}
 
-	filePath = filepath.Clean(filePath)
-	if !isAbsPath(filePath) {
+	filePath, err := shared.ValidateMediaFilePath(rawPath)
+	if err != nil {
 		c.Status(http.StatusBadRequest)
-		return
-	}
-	info, err := os.Stat(filePath)
-	if err != nil || info.IsDir() {
-		c.Status(http.StatusNotFound)
-		return
-	}
-
-	ext := shared.NormaliseExt(filepath.Ext(filePath))
-	_, isImg := shared.ImageExtensions[ext]
-	_, isVid := shared.VideoExtensions[ext]
-	if !isImg && !isVid {
-		c.Status(http.StatusForbidden)
 		return
 	}
 
 	c.File(filePath)
 }
 
-// isDir returns true when path exists and is a directory.
+// isDir returns true when path exists, is a directory, and is not a protected system directory.
 func isDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+	safe, err := shared.ValidateSafeDirPath(path)
+	return err == nil && safe != ""
 }
 
 // expandPath cleans the path and expands a leading tilde (~) to the user's home directory.
@@ -248,9 +233,10 @@ func expandPath(p string) string {
 	return filepath.Clean(p)
 }
 
-// isAbsPath rejects relative paths and paths containing null bytes.
+// isAbsPath verifies that p is a valid, clean absolute path and not in a protected system directory.
 func isAbsPath(p string) bool {
-	return filepath.IsAbs(p) && !strings.Contains(p, "\x00")
+	safe, err := shared.ValidateSafePath(p)
+	return err == nil && safe != ""
 }
 
 // round1 rounds f to one decimal place.
