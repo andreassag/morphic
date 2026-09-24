@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/exterex/morphic/internal/events"
+	"github.com/andreassag/morphic/internal/events"
 	"github.com/gin-gonic/gin"
 )
 

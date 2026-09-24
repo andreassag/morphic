@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/disintegration/imaging"
 	"github.com/andreassag/morphic/internal/shared"
+	"github.com/disintegration/imaging"
 )
 
 // HWAccelProfile defines a detected hardware acceleration encoder profile.

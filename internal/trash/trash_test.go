@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/exterex/morphic/internal/trash"
+	"github.com/andreassag/morphic/internal/trash"
 )
 
 func TestTrash_MoveAndRestore(t *testing.T) {

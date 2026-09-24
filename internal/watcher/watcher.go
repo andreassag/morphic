@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/exterex/morphic/internal/converter"
-	"github.com/exterex/morphic/internal/organizer"
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/converter"
+	"github.com/andreassag/morphic/internal/organizer"
+	"github.com/andreassag/morphic/internal/shared"
 	"github.com/fsnotify/fsnotify"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"

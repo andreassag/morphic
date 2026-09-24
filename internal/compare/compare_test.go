@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/exterex/morphic/internal/compare"
+	"github.com/andreassag/morphic/internal/compare"
 )
 
 func assetsDir(t *testing.T) string {

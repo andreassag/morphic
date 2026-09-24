@@ -12,7 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/exterex/morphic/internal/database"
+	"github.com/andreassag/morphic/internal/database"
+	"github.com/andreassag/morphic/internal/shared"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -57,6 +58,12 @@ type StandaloneMeta struct {
 
 // MoveToTrash moves a file into the safe-trash store and logs an audit_log record.
 func MoveToTrash(ctx context.Context, pool *pgxpool.Pool, filePath string, origin ...string) (int64, string, int64, error) {
+	safePath, err := shared.ValidateSafePath(filePath)
+	if err != nil {
+		return 0, "", 0, fmt.Errorf("validating file path: %w", err)
+	}
+	filePath = safePath
+
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return 0, "", 0, fmt.Errorf("reading file info: %w", err)
@@ -75,6 +82,10 @@ func MoveToTrash(ctx context.Context, pool *pgxpool.Pool, filePath string, origi
 	}
 
 	targetPath := filepath.Join(destDir, filepath.Base(filePath))
+	relTarget, err := filepath.Rel(trashBase, targetPath)
+	if err != nil || strings.HasPrefix(relTarget, "..") || strings.HasPrefix(relTarget, "/") {
+		return 0, "", 0, fmt.Errorf("target path escapes trash directory: %s", targetPath)
+	}
 
 	// Try atomic rename first
 	err = os.Rename(filePath, targetPath)
@@ -504,27 +515,36 @@ func StartAutoPurge(ctx context.Context, pool *pgxpool.Pool) {
 }
 
 func copyAndDelete(src, dst string) error {
-	in, err := os.Open(src)
+	safeSrc, err := shared.ValidateSafePath(src)
+	if err != nil {
+		return fmt.Errorf("validating source path: %w", err)
+	}
+	safeDst, err := shared.ValidateSafePath(dst)
+	if err != nil {
+		return fmt.Errorf("validating destination path: %w", err)
+	}
+
+	in, err := os.Open(safeSrc)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.Create(dst)
+	out, err := os.Create(safeDst)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
 
 	if _, err := io.Copy(out, in); err != nil {
-		_ = os.Remove(dst)
+		_ = os.Remove(safeDst)
 		return err
 	}
 	_ = in.Close()
 	_ = out.Close()
 
-	if err := os.Remove(src); err != nil {
-		_ = os.Remove(dst)
+	if err := os.Remove(safeSrc); err != nil {
+		_ = os.Remove(safeDst)
 		return err
 	}
 	return nil

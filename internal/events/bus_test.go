@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/exterex/morphic/internal/events"
+	"github.com/andreassag/morphic/internal/events"
 )
 
 func TestEventBus_PublishSubscribe(t *testing.T) {

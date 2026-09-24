@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // CullingRule specifies the strategy for choosing which duplicate to keep.

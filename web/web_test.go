@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/exterex/morphic/web"
+	"github.com/andreassag/morphic/web"
 	"github.com/gin-gonic/gin"
 )
 

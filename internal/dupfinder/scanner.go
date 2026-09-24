@@ -9,7 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andreassag/morphic/internal/database"
+	"github.com/andreassag/morphic/internal/events"
 	"github.com/andreassag/morphic/internal/shared"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // MediaEntry describes one file entry within a duplicate group.

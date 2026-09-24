@@ -3,7 +3,7 @@ package dupfinder_test
 import (
 	"testing"
 
-	"github.com/exterex/morphic/internal/dupfinder"
+	"github.com/andreassag/morphic/internal/dupfinder"
 )
 
 func TestApplyCullingRule_KeepLargest(t *testing.T) {

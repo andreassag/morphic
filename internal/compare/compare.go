@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andreassag/morphic/internal/shared"
 	"github.com/disintegration/imaging"
-	"github.com/exterex/morphic/internal/shared"
 )
 
 // MediaItemMeta holds metadata for one side of a comparison.
@@ -75,6 +75,12 @@ func CompareMetadata(ctx context.Context, leftPath, rightPath string) (*Comparis
 }
 
 func extractMeta(ctx context.Context, path string) (*MediaItemMeta, error) {
+	safePath, err := shared.ValidateMediaFilePath(path)
+	if err != nil {
+		return nil, fmt.Errorf("validating media path: %w", err)
+	}
+	path = safePath
+
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -188,6 +194,17 @@ func formatDuration(seconds float64) string {
 
 // GenerateDiffImage generates a visual difference image overlay between two images.
 func GenerateDiffImage(ctx context.Context, leftPath, rightPath string) ([]byte, error) {
+	safeLeft, err := shared.ValidateMediaFilePath(leftPath)
+	if err != nil {
+		return nil, fmt.Errorf("validating left image path: %w", err)
+	}
+	safeRight, err := shared.ValidateMediaFilePath(rightPath)
+	if err != nil {
+		return nil, fmt.Errorf("validating right image path: %w", err)
+	}
+	leftPath = safeLeft
+	rightPath = safeRight
+
 	if shared.IsVideo(leftPath) || shared.IsVideo(rightPath) {
 		return nil, fmt.Errorf("difference heatmap is only supported for static images")
 	}

@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/exterex/morphic/internal/dupfinder"
-	"github.com/exterex/morphic/internal/organizer"
-	"github.com/exterex/morphic/internal/shared"
-	"github.com/exterex/morphic/internal/trash"
-	"github.com/exterex/morphic/internal/watcher"
+	"github.com/andreassag/morphic/internal/dupfinder"
+	"github.com/andreassag/morphic/internal/organizer"
+	"github.com/andreassag/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/trash"
+	"github.com/andreassag/morphic/internal/watcher"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

@@ -3,7 +3,8 @@ package web
 import (
 	"net/http"
 
-	"github.com/exterex/morphic/internal/compare"
+	"github.com/andreassag/morphic/internal/compare"
+	"github.com/andreassag/morphic/internal/shared"
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,12 +24,18 @@ func handleMediaCompare(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "MISSING_PATHS", "Both 'left' and 'right' paths are required")
 		return
 	}
-	if !isAbsPath(left) || !isAbsPath(right) {
-		respondError(c, http.StatusBadRequest, "INVALID_PATH", "Paths must be absolute")
+	safeLeft, err := shared.ValidateMediaFilePath(left)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_PATH", "Invalid left path: "+err.Error())
+		return
+	}
+	safeRight, err := shared.ValidateMediaFilePath(right)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_PATH", "Invalid right path: "+err.Error())
 		return
 	}
 
-	result, err := compare.CompareMetadata(c.Request.Context(), left, right)
+	result, err := compare.CompareMetadata(c.Request.Context(), safeLeft, safeRight)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "COMPARE_FAILED", err.Error())
 		return
@@ -45,12 +52,18 @@ func handleMediaDiff(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "MISSING_PATHS", "Both 'left' and 'right' paths are required")
 		return
 	}
-	if !isAbsPath(left) || !isAbsPath(right) {
-		respondError(c, http.StatusBadRequest, "INVALID_PATH", "Paths must be absolute")
+	safeLeft, err := shared.ValidateMediaFilePath(left)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_PATH", "Invalid left path: "+err.Error())
+		return
+	}
+	safeRight, err := shared.ValidateMediaFilePath(right)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_PATH", "Invalid right path: "+err.Error())
 		return
 	}
 
-	data, err := compare.GenerateDiffImage(c.Request.Context(), left, right)
+	data, err := compare.GenerateDiffImage(c.Request.Context(), safeLeft, safeRight)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "DIFF_FAILED", err.Error())
 		return

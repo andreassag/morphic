@@ -17,9 +17,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/corona10/goimagehash"
-	"github.com/disintegration/imaging"
+	"github.com/andreassag/morphic/internal/database"
 	"github.com/andreassag/morphic/internal/shared"
+	"github.com/corona10/goimagehash"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // VideoInfo stores information about a video file.

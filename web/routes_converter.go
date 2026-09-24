@@ -11,7 +11,10 @@ import (
 	"time"
 
 	"github.com/andreassag/morphic/internal/converter"
+	"github.com/andreassag/morphic/internal/database"
+	"github.com/andreassag/morphic/internal/events"
 	"github.com/andreassag/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/trash"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -209,6 +212,20 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 		job.mu.Unlock()
 
 		events.DefaultBus.Publish("converter", "progress", convProgressMap(job))
+
+		safeSource, err := shared.ValidateMediaFilePath(source)
+		if err != nil {
+			result := ConversionResult{
+				Source: source,
+				Status: "error",
+				Error:  "invalid file path: " + err.Error(),
+			}
+			job.mu.Lock()
+			job.Results = append(job.Results, result)
+			job.mu.Unlock()
+			continue
+		}
+		source = safeSource
 
 		result := ConversionResult{
 			Source:        source,
