@@ -11,6 +11,7 @@ on:
     workflows:
       - "Continuous integration"
       - "CodeQL Advanced"
+      - "Docker Lint"
     types:
       - completed
   schedule:

@@ -1,0 +1,52 @@
+name: "Docker Lint"
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - feature/**
+    paths:
+      - 'Dockerfile'
+      - '.hadolint.yaml'
+      - '.github/workflows/docker-lint.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+      - feature/**
+    paths:
+      - 'Dockerfile'
+      - '.hadolint.yaml'
+      - '.github/workflows/docker-lint.yml'
+  schedule:
+    - cron: '25 8 * * 5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hadolint:
+    name: Hadolint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Run Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          format: sarif
+          output-file: hadolint-results.sarif
+          no-fail: true
+
+      - name: Upload Hadolint SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@v4.37.9
+        with:
+          sarif_file: hadolint-results.sarif
+          category: "/tool:hadolint"
