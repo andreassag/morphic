@@ -10,12 +10,12 @@ import (
 )
 
 var (
-	ErrEmptyPath         = errors.New("path cannot be empty")
-	ErrNullByte          = errors.New("path contains null byte")
-	ErrProtectedSystem   = errors.New("access to system directory is forbidden")
-	ErrNotADirectory     = errors.New("path is not a directory")
-	ErrNotARegularFile   = errors.New("path is not a regular file")
-	ErrUnsupportedMedia  = errors.New("file format is not a supported media type")
+	ErrEmptyPath        = errors.New("path cannot be empty")
+	ErrNullByte         = errors.New("path contains null byte")
+	ErrProtectedSystem  = errors.New("access to system directory is forbidden")
+	ErrNotADirectory    = errors.New("path is not a directory")
+	ErrNotARegularFile  = errors.New("path is not a regular file")
+	ErrUnsupportedMedia = errors.New("file format is not a supported media type")
 )
 
 // protectedPrefixesUnix defines root-level OS directories that should never be accessed by Morphic.
