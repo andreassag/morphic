@@ -14,10 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/exterex/morphic/internal/database"
-	"github.com/exterex/morphic/internal/shared"
-	"github.com/exterex/morphic/web"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/andreassag/morphic/internal/shared"
+	"github.com/andreassag/morphic/web"
 )
 
 func main() {

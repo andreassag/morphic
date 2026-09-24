@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/exterex/morphic/internal/converter"
+	"github.com/andreassag/morphic/internal/converter"
 )
 
 // assetsDir returns the absolute path to assets/test relative to this file.

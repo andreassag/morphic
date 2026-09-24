@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/exterex/morphic/internal/dupfinder"
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/dupfinder"
+	"github.com/andreassag/morphic/internal/shared"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

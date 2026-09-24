@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/exterex/morphic/internal/organizer"
+	"github.com/andreassag/morphic/internal/organizer"
 )
 
 // assetsDir returns the abs path of assets/test from internal/organizer/.

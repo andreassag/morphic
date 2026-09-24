@@ -9,11 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/exterex/morphic/internal/database"
-	"github.com/exterex/morphic/internal/events"
-	"github.com/exterex/morphic/internal/shared"
-	"github.com/exterex/morphic/internal/trash"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // UnifiedPlanEntry represents an organizer plan entry matching the API response.

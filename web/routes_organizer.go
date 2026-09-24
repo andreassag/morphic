@@ -3,7 +3,7 @@ package web
 import (
 	"net/http"
 
-	"github.com/exterex/morphic/internal/organizer"
+	"github.com/andreassag/morphic/internal/organizer"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

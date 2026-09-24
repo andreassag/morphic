@@ -12,7 +12,7 @@ A self-hosted media toolkit written in Go. Convert formats, find duplicates, and
 ## Getting Started
 
 ```bash
-git clone https://github.com/exterex/morphic
+git clone https://github.com/andreassag/morphic
 cd morphic
 make build
 ./bin/morphic          # opens http://127.0.0.1:8000
@@ -157,4 +157,4 @@ make run     # build + start server
 
 ## License
 
-[MIT License](https://github.com/exterex/morphic/blob/main/LICENSE)
+[MIT License](https://github.com/andreassag/morphic/blob/main/LICENSE)

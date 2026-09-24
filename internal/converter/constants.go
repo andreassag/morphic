@@ -3,7 +3,7 @@ package converter
 import (
 	"sort"
 
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // VideoContainerConfig describes a supported output video container.

@@ -10,11 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/exterex/morphic/internal/converter"
-	"github.com/exterex/morphic/internal/database"
-	"github.com/exterex/morphic/internal/events"
-	"github.com/exterex/morphic/internal/shared"
-	"github.com/exterex/morphic/internal/trash"
+	"github.com/andreassag/morphic/internal/converter"
+	"github.com/andreassag/morphic/internal/shared"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // assetsDir returns assets/test relative to internal/shared/.

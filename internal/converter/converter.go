@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/disintegration/imaging"
-	"github.com/exterex/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/shared"
 )
 
 // HWAccelProfile defines a detected hardware acceleration encoder profile.
