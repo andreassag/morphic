@@ -138,7 +138,7 @@ web/
   server.go        Gin router with embedded static assets
   routes_*.go      HTTP handlers per module
   templates/       index.html — single-page UI
-  static/          app.js, style.css
+  static/          js/, css/
 ```
 
 ---

@@ -2,7 +2,6 @@ package web
 
 import (
 	"math"
-	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -11,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/andreassag/morphic/internal/converter"
 	"github.com/andreassag/morphic/internal/shared"
 	"github.com/gin-gonic/gin"
 )
@@ -25,24 +25,46 @@ func registerSharedRoutes(r *gin.Engine) {
 
 // handleBrowseDirectory lists directories for the in-page folder browser.
 func handleBrowseDirectory(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
-		home, _ := os.UserHomeDir()
-		path = home
+	rawPath := c.Query("path")
+	if rawPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = "."
+		}
+		rawPath = home
 	}
 
-	path = filepath.Clean(path)
-	if !isAbsPath(path) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
+	safePath, err := shared.ValidateSafePath(rawPath)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_PATH", err.Error())
 		return
 	}
-	info, err := os.Stat(path)
+
+	pathExists := true
+	browseDir := safePath
+	filterPrefix := ""
+
+	info, err := os.Stat(safePath)
 	if err != nil || !info.IsDir() {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Not a directory"})
+		pathExists = false
+		// If path doesn't exist as a directory, check parent directory for autocomplete matching
+		parentDir := filepath.Dir(safePath)
+		parentSafe, pErr := shared.ValidateSafeDirPath(parentDir)
+		if pErr == nil {
+			browseDir = parentSafe
+			filterPrefix = strings.ToLower(filepath.Base(safePath))
+		} else {
+			respondError(c, http.StatusBadRequest, "NOT_A_DIRECTORY", "Not a directory")
+			return
+		}
+	}
+
+	entries, err := os.ReadDir(browseDir)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "READ_DIR_FAILED", err.Error())
 		return
 	}
 
-	entries, _ := os.ReadDir(path)
 	type dirEntry struct {
 		Name string `json:"name"`
 		Path string `json:"path"`
@@ -53,10 +75,13 @@ func handleBrowseDirectory(c *gin.Context) {
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
+		if filterPrefix != "" && !strings.HasPrefix(strings.ToLower(e.Name()), filterPrefix) {
+			continue
+		}
 		if e.IsDir() {
 			dirs = append(dirs, dirEntry{
 				Name: e.Name(),
-				Path: filepath.Join(path, e.Name()),
+				Path: filepath.Join(browseDir, e.Name()),
 				Type: "directory",
 			})
 		}
@@ -65,24 +90,25 @@ func handleBrowseDirectory(c *gin.Context) {
 		return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name)
 	})
 
-	parent := filepath.Dir(path)
+	parent := filepath.Dir(browseDir)
 	var parentPtr interface{} = parent
-	if parent == path {
+	if parent == browseDir {
 		parentPtr = nil
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"current": path,
+		"current": browseDir,
 		"parent":  parentPtr,
 		"entries": dirs,
+		"exists":  pathExists,
 	})
 }
 
 // handleBrowseNative opens the OS-native folder picker dialog.
 func handleBrowseNative(c *gin.Context) {
-	folder, available, err := shared.OpenNativeFolderDialog()
+	folder, available, err := shared.OpenNativeFolderDialog(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "NATIVE_DIALOG_ERROR", err.Error())
 		return
 	}
 	if !available {
@@ -104,29 +130,27 @@ func handleBrowseNative(c *gin.Context) {
 }
 
 func handleThumbnail(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
+	rawPath := c.Query("path")
+	if rawPath == "" {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
+	filePath, err := shared.ValidateMediaFilePath(rawPath)
+	if err != nil {
 		c.Status(http.StatusBadRequest)
 		return
 	}
 
 	var data []byte
-	var err error
-
-	path = filepath.Clean(path)
-	if !isAbsPath(path) {
-		c.Status(http.StatusBadRequest)
-		return
-	}
-
-	if shared.IsVideoFile(path) {
-		data, err = shared.GenerateVideoThumbnail(path, shared.DefaultThumbnailSize)
+	if shared.IsVideo(filePath) {
+		data, err = shared.GenerateVideoThumbnail(c.Request.Context(), filePath, shared.DefaultThumbnailSize)
 	} else {
-		data, err = shared.GenerateImageThumbnail(path, shared.DefaultThumbnailSize)
+		data, err = shared.GenerateImageThumbnail(c.Request.Context(), filePath, shared.DefaultThumbnailSize)
 	}
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "thumbnail generation failed", "detail": err.Error()})
+		respondError(c, http.StatusInternalServerError, "THUMBNAIL_FAILED", err.Error())
 		return
 	}
 
@@ -135,16 +159,17 @@ func handleThumbnail(c *gin.Context) {
 
 func handleSystemInfo(c *gin.Context) {
 	ffmpegInfo := gin.H{
-		"installed":       false,
-		"hwaccels":        []string{},
-		"encoders":        []string{},
-		"nvenc_available": false,
+		"installed": false,
+		"encoders":  []string{},
+		"profiles":  converter.DetectAvailableHWAccels(c.Request.Context()),
 	}
 
-	if _, err := exec.LookPath("ffmpeg"); err == nil {
+	candidates := shared.FFmpegCandidates()
+	if len(candidates) > 0 {
+		bin := candidates[0]
 		ffmpegInfo["installed"] = true
 
-		if out, err := exec.Command("ffmpeg", "-hide_banner", "-encoders").
+		if out, err := exec.CommandContext(c.Request.Context(), bin, "-hide_banner", "-encoders").
 			CombinedOutput(); err == nil {
 			var encoders []string
 			for _, line := range strings.Split(string(out), "\n") {
@@ -154,12 +179,6 @@ func handleSystemInfo(c *gin.Context) {
 				}
 			}
 			ffmpegInfo["encoders"] = encoders
-			for _, e := range encoders {
-				if strings.Contains(e, "nvenc") {
-					ffmpegInfo["nvenc_available"] = true
-					break
-				}
-			}
 		}
 	}
 
@@ -175,48 +194,49 @@ func handleSystemInfo(c *gin.Context) {
 
 // handleMedia serves a media file for full-size preview.
 func handleMedia(c *gin.Context) {
-	filePath := c.Query("path")
-	if filePath == "" {
+	rawPath := c.Query("path")
+	if rawPath == "" {
 		c.Status(http.StatusBadRequest)
 		return
 	}
 
-	filePath = filepath.Clean(filePath)
-	if !isAbsPath(filePath) {
+	filePath, err := shared.ValidateMediaFilePath(rawPath)
+	if err != nil {
 		c.Status(http.StatusBadRequest)
 		return
 	}
-	info, err := os.Stat(filePath)
-	if err != nil || info.IsDir() {
-		c.Status(http.StatusNotFound)
-		return
-	}
 
-	ext := shared.NormaliseExt(filepath.Ext(filePath))
-	_, isImg := shared.ImageExtensions[ext]
-	_, isVid := shared.VideoExtensions[ext]
-	if !isImg && !isVid {
-		c.Status(http.StatusForbidden)
-		return
-	}
-
-	contentType := mime.TypeByExtension(filepath.Ext(filePath))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
 	c.File(filePath)
 }
 
-// isDir returns true when path exists and is a directory.
+// isDir returns true when path exists, is a directory, and is not a protected system directory.
 func isDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+	safe, err := shared.ValidateSafeDirPath(path)
+	return err == nil && safe != ""
 }
 
-// isAbsPath rejects relative paths and paths containing null bytes.
-// It does not enforce any allowlisted root directory.
+// expandPath cleans the path and expands a leading tilde (~) to the user's home directory.
+func expandPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	if p == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Clean(home)
+		}
+	} else if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Clean(filepath.Join(home, p[2:]))
+		}
+	}
+	return filepath.Clean(p)
+}
+
+// isAbsPath verifies that p is a valid, clean absolute path and not in a protected system directory.
 func isAbsPath(p string) bool {
-	return filepath.IsAbs(p) && !strings.Contains(p, "\x00")
+	safe, err := shared.ValidateSafePath(p)
+	return err == nil && safe != ""
 }
 
 // round1 rounds f to one decimal place.

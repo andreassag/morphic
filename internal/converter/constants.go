@@ -2,7 +2,6 @@ package converter
 
 import (
 	"sort"
-	"strings"
 
 	"github.com/andreassag/morphic/internal/shared"
 )
@@ -99,7 +98,7 @@ func init() {
 
 // GetCompatibleTargets returns the list of extensions a source can convert to.
 func GetCompatibleTargets(sourcePath string) []string {
-	ext := shared.NormaliseExt(strings.ToLower(extOf(sourcePath)))
+	ext := shared.NormaliseExt(extOf(sourcePath))
 	if targets, ok := ImageConversions[ext]; ok {
 		return targets
 	}

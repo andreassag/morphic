@@ -1,0 +1,115 @@
+{{ define "organizer_tab" }}
+<div class="tab-content" id="tab-organizer">
+<div class="container">
+
+    <!-- Organizer Config (Collapsible) -->
+    <div class="card collapsible-card" id="orgScanCard">
+        <div class="card-header" onclick="toggleCardCollapse('orgScanCard')">
+            <div class="card-title"><span class="icon">📂</span> Organize Files</div>
+            <button class="collapse-toggle" type="button" aria-label="Toggle section">
+                <span class="chevron">▼</span>
+            </button>
+        </div>
+
+        <div class="card-body">
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="orgFolder">Source Folder</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="orgFolder" placeholder="Enter an absolute path (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('organizer')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="orgBrowser">
+                        <div class="fb-header">
+                            <span class="fb-path">~</span>
+                            <button class="btn btn-ghost btn-sm" onclick="closeBrowser('organizer')">✕</button>
+                        </div>
+                        <div class="fb-item fb-parent" style="display:none">
+                            <span class="icon">⬆️</span> ..
+                        </div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer">
+                            <button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('organizer')">✓ Use this folder</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group narrow">
+                    <label for="orgMode">Mode</label>
+                    <select id="orgMode" onchange="orgModeChanged()">
+                        <option value="sort">Date Sort (Folder Structure)</option>
+                        <option value="rename">Batch Rename</option>
+                    </select>
+                </div>
+                <div class="form-group narrow">
+                    <label for="orgOperation">File operation</label>
+                    <select id="orgOperation">
+                        <option value="copy">Copy (Safer)</option>
+                        <option value="move">Move</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="orgSortOptions">
+                <div class="form-row" style="margin-bottom:14px;">
+                    <div class="form-group">
+                        <label for="orgTemplate">Folder template</label>
+                        <input type="text" id="orgTemplate" placeholder="{year}/{month}/{day}" value="{year}/{month}" />
+                        <small style="color:var(--text-dim);">Tokens: {year}, {month}, {day}, {hour}, {minute}</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="orgDest">Destination folder</label>
+                        <input type="text" id="orgDest" placeholder="Leave empty = organize in-place" />
+                    </div>
+                </div>
+            </div>
+
+            <div id="orgRenameOptions" style="display:none;">
+                <div class="form-row" style="margin-bottom:14px;">
+                    <div class="form-group">
+                        <label for="orgRenameTemplate">Rename template</label>
+                        <input type="text" id="orgRenameTemplate" placeholder="{date}_{seq:4}" value="{date}_{seq:4}" />
+                        <small style="color:var(--text-dim);">Tokens: {date}, {datetime}, {seq}, {seq:N}, {original}, {ext}</small>
+                    </div>
+                    <div class="form-group narrow">
+                        <label for="orgStartSeq">Start sequence</label>
+                        <input type="number" id="orgStartSeq" value="1" min="1" />
+                    </div>
+                </div>
+            </div>
+
+            <div style="display:flex;gap:10px;">
+                <button class="btn btn-primary" id="orgPlanBtn" onclick="orgStartPlan()">📋 Preview Plan</button>
+                <button class="btn btn-success" id="orgExecBtn" onclick="orgExecute()" style="display:none;">▶️ Execute Plan</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Compact Progress Bar with Inline Stop -->
+    <div class="card progress-compact" id="orgProgress" style="display:none;">
+        <div class="progress-compact-row">
+            <span class="spinner"></span>
+            <span class="progress-compact-msg" id="orgProgressMsg">Processing organizer plan...</span>
+            <div class="progress-bar-track compact">
+                <div class="progress-bar-fill" id="orgProgressBar" style="width:0%;"></div>
+            </div>
+            <span class="progress-compact-pct" id="orgProgressPct">0%</span>
+            <button class="btn btn-stop btn-sm" id="orgStopBtn" onclick="orgCancelJob()">⏹ Stop</button>
+        </div>
+    </div>
+
+    <!-- Plan Preview -->
+    <div id="orgPlanResults" style="display:none;">
+        <div class="card" id="orgPlanContent"></div>
+    </div>
+
+    <!-- Execution Results -->
+    <div id="orgExecResults" style="display:none;">
+        <div id="orgExecContent"></div>
+    </div>
+
+</div>
+</div>
+{{ end }}

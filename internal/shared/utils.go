@@ -3,6 +3,7 @@ package shared
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -36,11 +37,7 @@ func FindFilesByExtension(folder string, extensions map[string]struct{}, exclude
 			return nil
 		}
 
-		ext := strings.ToLower(filepath.Ext(path))
-		if alias, ok := Aliases[ext]; ok {
-			ext = alias
-		}
-
+		ext := NormaliseExt(filepath.Ext(path))
 		if _, ok := extensions[ext]; !ok {
 			return nil
 		}
@@ -71,7 +68,7 @@ func FindFilesByExtension(folder string, extensions map[string]struct{}, exclude
 	})
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("walking folder %s: %w", folder, err)
 	}
 
 	sort.Slice(files, func(i, j int) bool {
@@ -137,16 +134,26 @@ func NormaliseExt(ext string) string {
 
 // IsImage returns true if the file extension is a known image type.
 func IsImage(path string) bool {
-	ext := NormaliseExt(strings.ToLower(filepath.Ext(path)))
+	ext := NormaliseExt(filepath.Ext(path))
 	_, ok := ImageExtensions[ext]
 	return ok
 }
 
+// IsImageFile is an alias for IsImage.
+func IsImageFile(path string) bool {
+	return IsImage(path)
+}
+
 // IsVideo returns true if the file extension is a known video type.
 func IsVideo(path string) bool {
-	ext := NormaliseExt(strings.ToLower(filepath.Ext(path)))
+	ext := NormaliseExt(filepath.Ext(path))
 	_, ok := VideoExtensions[ext]
 	return ok
+}
+
+// IsVideoFile is an alias for IsVideo.
+func IsVideoFile(path string) bool {
+	return IsVideo(path)
 }
 
 // FormatDuration formats duration in human-readable format.
@@ -161,4 +168,46 @@ func FormatDuration(seconds float64) string {
 		return fmt.Sprintf("%dm %ds", minutes, secs)
 	}
 	return fmt.Sprintf("%ds", secs)
+}
+
+// ToWindowsPath converts a WSL /mnt/X/... path to a Windows X:\... path.
+// Windows-native executables (e.g. ffmpeg.exe) cannot access /mnt/ paths directly.
+func ToWindowsPath(p string) string {
+	if !strings.HasPrefix(p, "/mnt/") || len(p) < 7 {
+		return p
+	}
+	rest := p[5:] // strip "/mnt/"
+	slash := strings.IndexByte(rest, '/')
+	var drive, tail string
+	if slash == -1 {
+		drive = rest
+		tail = ""
+	} else {
+		drive = rest[:slash]
+		tail = rest[slash+1:]
+	}
+	if len(drive) != 1 {
+		return p
+	}
+	return strings.ToUpper(drive) + ":\\" + strings.ReplaceAll(tail, "/", "\\")
+}
+
+// PathForBin returns the path in the format expected by the given binary.
+// When bin is a Windows executable (.exe), WSL /mnt/ paths are converted.
+func PathForBin(bin, p string) string {
+	if strings.HasSuffix(strings.ToLower(bin), ".exe") {
+		return ToWindowsPath(p)
+	}
+	return p
+}
+
+// FFmpegCandidates returns available ffmpeg binary names in PATH.
+func FFmpegCandidates() []string {
+	var bins []string
+	for _, name := range []string{"ffmpeg", "ffmpeg.exe"} {
+		if _, err := exec.LookPath(name); err == nil {
+			bins = append(bins, name)
+		}
+	}
+	return bins
 }

@@ -1,0 +1,57 @@
+name: morphic
+
+services:
+  morphic:
+    mem_limit: 5g
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    container_name: morphic-app
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgres://morphic:morphic_secret@postgres:5432/morphic?sslmode=disable
+      - TRASH_RETENTION_DAYS=30
+      - WATCH_POLL_INTERVAL_SECS=30
+      - MORPHIC_TRASH_DIR=/app/data/trash
+    volumes:
+      - morphic_data:/app/data
+      - ./media:/media
+      - /mnt/d:/mnt/d
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  postgres:
+    mem_limit: 512m
+    image: pgvector/pgvector:pg17
+    container_name: morphic-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: morphic
+      POSTGRES_PASSWORD: morphic_secret
+      POSTGRES_DB: morphic
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U morphic -d morphic"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  postgres_data:
+  morphic_data:

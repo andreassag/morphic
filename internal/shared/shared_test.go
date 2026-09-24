@@ -1,6 +1,7 @@
 package shared_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -225,13 +226,12 @@ func TestIsExcludedPath(t *testing.T) {
 		{"/home/user/photos/img.jpg", false},
 		{"/home/user/$Recycle.Bin/img.jpg", true},
 		{"/home/user/.Trash/img.jpg", true},
-		{"/home/user/node_modules/img.jpg", true}, // node_modules is excluded
+		{"/home/user/node_modules/img.jpg", true},
 		{"/home/user/Pictures/img.jpg", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			got := shared.IsExcludedPath(tc.path, shared.ExcludedFolders)
-			if got != tc.want {
+			if got := shared.IsExcludedPath(tc.path, shared.ExcludedFolders); got != tc.want {
 				t.Errorf("IsExcludedPath(%q) = %v, want %v", tc.path, got, tc.want)
 			}
 		})
@@ -245,14 +245,13 @@ func TestGenerateImageThumbnail_jpg(t *testing.T) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Skip("sample1.jpg not present")
 	}
-	data, err := shared.GenerateImageThumbnail(path, 64)
+	data, err := shared.GenerateImageThumbnail(context.Background(), path, 64)
 	if err != nil {
 		t.Fatalf("GenerateImageThumbnail error: %v", err)
 	}
 	if len(data) == 0 {
 		t.Error("expected non-empty thumbnail bytes")
 	}
-	// JPEG starts with FF D8
 	if len(data) < 2 || data[0] != 0xFF || data[1] != 0xD8 {
 		t.Error("thumbnail is not a valid JPEG (missing FF D8 header)")
 	}
@@ -263,7 +262,7 @@ func TestGenerateImageThumbnail_png(t *testing.T) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Skip("sample2.png not present")
 	}
-	data, err := shared.GenerateImageThumbnail(path, 64)
+	data, err := shared.GenerateImageThumbnail(context.Background(), path, 64)
 	if err != nil {
 		t.Fatalf("GenerateImageThumbnail png error: %v", err)
 	}
@@ -290,6 +289,28 @@ func TestJobStore_setAndGet(t *testing.T) {
 	}
 }
 
+func TestJobStore_cancel(t *testing.T) {
+	type item struct{ shared.Job }
+	store := shared.NewJobStore[item]()
+
+	job := item{Job: shared.NewJob()}
+	store.Set(job.ID, &job)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	store.RegisterCancel(job.ID, cancel)
+
+	if !store.Cancel(job.ID) {
+		t.Fatal("Cancel returned false for registered job")
+	}
+
+	select {
+	case <-ctx.Done():
+		// Expected
+	default:
+		t.Fatal("context should be cancelled after store.Cancel()")
+	}
+}
+
 func TestJobStore_missingKey(t *testing.T) {
 	type item struct{ shared.Job }
 	store := shared.NewJobStore[item]()
@@ -298,37 +319,4 @@ func TestJobStore_missingKey(t *testing.T) {
 	if ok {
 		t.Error("expected false for missing key")
 	}
-}
-
-// ── Job context / cancel ────────────────────────────────────────────────────
-
-func TestJob_cancelStopsContext(t *testing.T) {
-	job := shared.NewJob()
-	ctx := job.Ctx()
-
-	select {
-	case <-ctx.Done():
-		t.Fatal("context should not be done before Cancel()")
-	default:
-	}
-
-	job.Cancel()
-
-	select {
-	case <-ctx.Done():
-		// expected
-	default:
-		t.Error("context should be done after Cancel()")
-	}
-}
-
-func TestJob_doubleCancelNoPanic(t *testing.T) {
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("double Cancel() panicked: %v", r)
-		}
-	}()
-	job := shared.NewJob()
-	job.Cancel()
-	job.Cancel() // must not panic
 }

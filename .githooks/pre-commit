@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -e
+
+echo "🔍 Running pre-commit checks..."
+
+# 1. Format check for Go files
+GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+if [ -n "$GO_FILES" ]; then
+    UNFORMATTED=$(gofmt -s -l $GO_FILES || true)
+    if [ -n "$UNFORMATTED" ]; then
+        echo "❌ The following Go files are not formatted properly with 'gofmt -s':"
+        echo "$UNFORMATTED"
+        echo "Please run: gofmt -s -w $UNFORMATTED"
+        exit 1
+    fi
+fi
+
+# 2. Run go vet
+echo "⚙️ Running go vet..."
+go vet ./...
+
+# 3. Run unit tests
+echo "🧪 Running unit tests..."
+go test ./...
+
+echo "✅ Pre-commit checks passed!"

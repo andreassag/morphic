@@ -1,0 +1,95 @@
+{{ define "compare_modal" }}
+<div class="modal-overlay" id="compareModal" onclick="closeCompareModal()">
+    <div class="modal compare-modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 id="compareModalTitle">🔍 Side-by-Side Media Inspector</h3>
+            <button class="modal-close-btn" onclick="closeCompareModal()">✕</button>
+        </div>
+
+        <div class="compare-body">
+            <!-- Mode switch: Split Slider vs Difference Heatmap (for images) or Video Inspector (for videos) -->
+            <div class="compare-toolbar" id="compareToolbar">
+                <div class="btn-group" id="imageModeGroup">
+                    <button class="btn btn-sm btn-ghost active" id="btnModeSplit" onclick="setCompareMode('split')">↔️ Split Slider</button>
+                    <button class="btn btn-sm btn-ghost" id="btnModeDiff" onclick="setCompareMode('diff')">🔥 Difference Heatmap</button>
+                </div>
+                <div id="videoModeBadge" style="display:none;align-items:center;gap:8px;">
+                    <span class="badge badge-primary">🎬 Video Comparison</span>
+                    <span style="font-size:12px;color:var(--text-dim);">Synchronized Dual Player</span>
+                </div>
+            </div>
+
+            <!-- Visual Comparison Viewport -->
+            <div class="compare-viewport" id="compareViewport">
+                <!-- Split View Container (Images) -->
+                <div class="split-view-container" id="splitViewContainer">
+                    <img id="compareImgLeft" class="split-img left" alt="Original / Left file" />
+                    <div class="split-overlay-wrapper" id="splitOverlayWrapper">
+                        <img id="compareImgRight" class="split-img right" alt="Converted / Right file" />
+                    </div>
+                    <div class="split-handle" id="splitHandle">
+                        <div class="split-handle-line"></div>
+                        <div class="split-handle-knob">◀ ▶</div>
+                    </div>
+                </div>
+
+                <!-- Difference Heatmap Image (Images) -->
+                <div class="diff-view-container" id="diffViewContainer" style="display:none;">
+                    <div class="diff-loading-indicator" id="diffLoadingIndicator" style="display:none;">
+                        <div class="spinner"></div>
+                        <span>Generating difference heatmap...</span>
+                    </div>
+                    <div class="diff-error-msg" id="diffErrorMsg"></div>
+                    <img id="compareDiffImg" alt="Pixel Diff Heatmap" style="display:none;" />
+                </div>
+
+                <!-- Dual Video Inspector (Videos) -->
+                <div class="video-view-container" id="videoViewContainer" style="display:none;">
+                    <div class="video-players-grid">
+                        <div class="video-player-box left">
+                            <div class="video-label-badge" id="vidLabelLeft">Left Video</div>
+                            <video id="compareVidLeft" playsinline preload="metadata"></video>
+                        </div>
+                        <div class="video-player-box right">
+                            <div class="video-label-badge" id="vidLabelRight">Right Video</div>
+                            <video id="compareVidRight" playsinline preload="metadata"></video>
+                        </div>
+                    </div>
+                    <div class="video-transport-bar">
+                        <div class="transport-controls">
+                            <button class="btn btn-ghost btn-sm" id="vidBtnStepBack" onclick="stepVideoFrame(-1)" title="Step backward 1 frame">⏮️</button>
+                            <button class="btn btn-primary btn-sm" id="vidBtnPlayPause" onclick="togglePlayVideos()">▶ Play</button>
+                            <button class="btn btn-ghost btn-sm" id="vidBtnStepForward" onclick="stepVideoFrame(1)" title="Step forward 1 frame">⏭️</button>
+                            <span class="video-time-display" id="vidTimeDisplay">0:00 / 0:00</span>
+                        </div>
+                        <div class="transport-scrubber-row">
+                            <input type="range" id="vidScrubber" min="0" max="100" value="0" step="0.1" oninput="onScrubberInput(this.value)" />
+                        </div>
+                        <div class="transport-options">
+                            <button class="btn btn-ghost btn-sm active" id="vidSyncBtn" onclick="toggleVideoSync()" title="Toggle playback synchronization">🔗 Synced</button>
+                            <button class="btn btn-ghost btn-sm" id="vidAudioBtn" onclick="toggleVideoAudio()" title="Toggle audio source">🔇 Muted</button>
+                            <button class="btn btn-ghost btn-sm" id="vidLoopBtn" onclick="toggleVideoLoop()" title="Toggle looping">🔁 Loop</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Metadata Comparison Table -->
+            <div class="compare-meta-grid" id="compareMetaGrid">
+                <div class="meta-card" id="metaLeftCard">
+                    <h4>Left File</h4>
+                    <div class="meta-details" id="metaLeftDetails"></div>
+                </div>
+                <div class="meta-card diff-summary-card" id="metaDiffCard">
+                    <h4>Comparison Delta</h4>
+                    <div class="meta-details" id="metaDiffDetails"></div>
+                </div>
+                <div class="meta-card" id="metaRightCard">
+                    <h4>Right File</h4>
+                    <div class="meta-details" id="metaRightDetails"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{ end }}

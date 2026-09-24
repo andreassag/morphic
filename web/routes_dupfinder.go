@@ -2,26 +2,27 @@ package web
 
 import (
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/andreassag/morphic/internal/dupfinder"
 	"github.com/andreassag/morphic/internal/shared"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func registerDupfinderRoutes(r *gin.Engine) {
+func registerDupfinderRoutes(r *gin.Engine, pool *pgxpool.Pool) {
 	g := r.Group("/api/dupfinder")
 	{
-		g.POST("/scan", handleDupfinderScan)
+		g.POST("/scan", func(c *gin.Context) { handleDupfinderScan(c, pool) })
 		g.GET("/scan/:id/status", handleDupfinderStatus)
 		g.GET("/scan/:id/results", handleDupfinderResults)
 		g.POST("/scan/:id/cancel", handleDupfinderCancel)
-		g.POST("/delete", handleDupfinderDelete)
+		g.POST("/auto-select", handleDupfinderAutoSelect)
+		g.POST("/delete", func(c *gin.Context) { handleDupfinderDelete(c, pool) })
 	}
 }
 
-func handleDupfinderScan(c *gin.Context) {
+func handleDupfinderScan(c *gin.Context, pool *pgxpool.Pool) {
 	var req struct {
 		Folder         string  `json:"folder"`
 		Type           string  `json:"type"`
@@ -29,18 +30,19 @@ func handleDupfinderScan(c *gin.Context) {
 		VideoThreshold float64 `json:"video_threshold"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	req.Folder = expandPath(req.Folder)
 	if req.Folder == "" || !isAbsPath(req.Folder) || !isDir(req.Folder) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid folder: " + req.Folder})
+		respondError(c, http.StatusBadRequest, "INVALID_FOLDER", "Invalid folder: "+req.Folder)
 		return
 	}
 	if req.Type == "" {
 		req.Type = "both"
 	}
 	if req.Type != "images" && req.Type != "videos" && req.Type != "both" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "type must be images, videos, or both"})
+		respondError(c, http.StatusBadRequest, "INVALID_TYPE", "type must be images, videos, or both")
 		return
 	}
 	if req.ImageThreshold == 0 {
@@ -50,7 +52,7 @@ func handleDupfinderScan(c *gin.Context) {
 		req.VideoThreshold = shared.DefaultVideoThreshold
 	}
 
-	jobID := dupfinder.StartJob(req.Folder, req.Type, req.ImageThreshold, req.VideoThreshold)
+	jobID := dupfinder.StartJob(c.Request.Context(), pool, req.Folder, req.Type, req.ImageThreshold, req.VideoThreshold)
 	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID})
 }
 
@@ -58,7 +60,7 @@ func handleDupfinderStatus(c *gin.Context) {
 	id := c.Param("id")
 	job, ok := dupfinder.GetJob(id)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
 
@@ -87,12 +89,12 @@ func handleDupfinderResults(c *gin.Context) {
 	id := c.Param("id")
 	job, ok := dupfinder.GetJob(id)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
 
-	if job.Status != "done" && job.Status != "failed" {
-		c.JSON(http.StatusConflict, gin.H{"error": "Scan not finished yet"})
+	if job.Status != shared.JobStatusDone && job.Status != shared.JobStatusFailed {
+		respondError(c, http.StatusConflict, "JOB_RUNNING", "Scan not finished yet")
 		return
 	}
 
@@ -104,63 +106,51 @@ func handleDupfinderResults(c *gin.Context) {
 	})
 }
 
-func handleDupfinderCancel(c *gin.Context) {
-	id := c.Param("id")
-	job, ok := dupfinder.GetJob(id)
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+func handleDupfinderAutoSelect(c *gin.Context) {
+	var req struct {
+		JobID string                `json:"job_id"`
+		Rule  dupfinder.CullingRule `json:"rule"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
-	job.Cancel()
+
+	job, ok := dupfinder.GetJob(req.JobID)
+	if !ok {
+		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
+		return
+	}
+
+	var allGroups []dupfinder.DuplicateGroup
+	allGroups = append(allGroups, job.ImageGroups...)
+	allGroups = append(allGroups, job.VideoGroups...)
+
+	result := dupfinder.ApplyCullingRule(allGroups, req.Rule)
+	c.JSON(http.StatusOK, result)
+}
+
+func handleDupfinderCancel(c *gin.Context) {
+	id := c.Param("id")
+	if !dupfinder.CancelJob(id) {
+		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "cancelling"})
 }
 
-func handleDupfinderDelete(c *gin.Context) {
+func handleDupfinderDelete(c *gin.Context, pool *pgxpool.Pool) {
 	var req struct {
 		Files []string `json:"files"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 	if len(req.Files) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No files specified"})
+		respondError(c, http.StatusBadRequest, "EMPTY_FILES", "No files specified")
 		return
 	}
 
-	var results []map[string]interface{}
-	totalFreed := int64(0)
-
-	for _, fp := range req.Files {
-		if !isAbsPath(fp) {
-			results = append(results, map[string]interface{}{"path": fp, "status": "not_found"})
-			continue
-		}
-		info, err := os.Stat(fp)
-		if err != nil {
-			results = append(results, map[string]interface{}{"path": fp, "status": "not_found"})
-			continue
-		}
-		if info.IsDir() {
-			results = append(results, map[string]interface{}{"path": fp, "status": "not_found"})
-			continue
-		}
-		size := info.Size()
-		if err := os.Remove(fp); err != nil {
-			if os.IsPermission(err) {
-				results = append(results, map[string]interface{}{"path": fp, "status": "permission_denied"})
-			} else {
-				results = append(results, map[string]interface{}{"path": fp, "status": "error", "error": err.Error()})
-			}
-		} else {
-			totalFreed += size
-			results = append(results, map[string]interface{}{"path": fp, "status": "deleted", "size_freed": size})
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"results":               results,
-		"total_freed":           totalFreed,
-		"total_freed_formatted": shared.FormatFileSize(totalFreed),
-	})
+	c.JSON(http.StatusOK, executeDeleteFiles(c.Request.Context(), pool, req.Files, "dupfinder"))
 }

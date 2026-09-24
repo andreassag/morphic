@@ -1,0 +1,78 @@
+/* ── Cards & Panels ────────────────────────────────────────────────── */
+
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+    transition: var(--transition);
+}
+
+.card:hover {
+    border-color: var(--border-hover);
+}
+
+.card-title {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+}
+
+.card-header-flex {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.card-header-flex .card-title {
+    margin-bottom: 0;
+}
+
+/* Collapsible Card */
+.collapsible-card .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+}
+
+.collapsible-card .card-header .card-title {
+    margin-bottom: 0;
+}
+
+.collapse-toggle {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 4px 8px;
+    transition: var(--transition);
+}
+
+.collapse-toggle .chevron {
+    display: inline-block;
+    transition: transform 0.2s ease;
+}
+
+.collapsible-card.collapsed .collapse-toggle .chevron {
+    transform: rotate(-90deg);
+}
+
+.collapsible-card.collapsed .card-body {
+    display: none;
+}
+
+.collapsible-card .card-body {
+    margin-top: 16px;
+}

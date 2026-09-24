@@ -1,0 +1,59 @@
+{{ define "settings_tab" }}
+<div class="tab-content" id="tab-settings">
+<div class="container">
+
+    <!-- Watch Folders Card -->
+    <div class="card">
+        <div class="card-title"><span class="icon">👁️</span> Watch Folders (Daemon Mode)</div>
+        <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px;">
+            Morphic continuously monitors these folders. New media files dropped into these directories are automatically organized or converted in the background.
+        </p>
+
+        <div class="form-row" style="margin-bottom:14px;">
+            <div class="form-group" style="flex:2;">
+                <label for="watchNewPath">Directory to watch</label>
+                <input type="text" id="watchNewPath" placeholder="Enter an absolute directory path (e.g. /media/inbox)…" />
+            </div>
+            <div class="form-group narrow">
+                <label for="watchNewAction">Auto-Action</label>
+                <select id="watchNewAction">
+                    <option value="organize">Date Organize ({year}/{month})</option>
+                    <option value="convert">Auto-Convert (WebP/MP4)</option>
+                </select>
+            </div>
+            <div class="form-group narrow" style="align-self:flex-end;">
+                <button class="btn btn-primary" onclick="addWatchFolder()">+ Add Watch Folder</button>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="data-table" id="watchersTable">
+                <thead>
+                    <tr>
+                        <th>Watch Path</th>
+                        <th>Action</th>
+                        <th>Status</th>
+                        <th>Added</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="watchersTableBody">
+                    <tr>
+                        <td colspan="5" style="text-align:center;padding:20px;color:var(--text-dim);">No watch folders configured yet.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- System Diagnostics Card -->
+    <div class="card">
+        <div class="card-title"><span class="icon">⚡</span> System &amp; Hardware Acceleration Info</div>
+        <div id="systemInfoDetails" style="font-size:13px;line-height:1.8;color:var(--text);">
+            Loading hardware capabilities…
+        </div>
+    </div>
+
+</div>
+</div>
+{{ end }}

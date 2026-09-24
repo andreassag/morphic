@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -e
+
+echo "🚀 Running pre-push verification (race detector & vet)..."
+
+go vet ./...
+go test -race ./...
+
+echo "✅ Pre-push verification passed!"
