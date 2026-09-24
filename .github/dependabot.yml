@@ -3,14 +3,15 @@
 
 version: 2
 updates:
-  # Monitor Go module dependencies
+  # =========================================================================
+  # Go module dependencies — main
+  # =========================================================================
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
       time: "09:00"
-    # Group all minor and patch updates together
     groups:
       go-dependencies:
         patterns:
@@ -18,23 +19,45 @@ updates:
         update-types:
           - "minor"
           - "patch"
-    # Keep pull requests manageable
     open-pull-requests-limit: 5
-    # Add labels for easy filtering
     labels:
       - "dependencies"
       - "go"
-    # Target the main branch
+      - "target:main"
     target-branch: "main"
 
-  # Monitor GitHub Actions versions
+  # =========================================================================
+  # Go module dependencies — develop
+  # =========================================================================
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "go"
+      - "target:develop"
+    target-branch: "develop"
+
+  # =========================================================================
+  # GitHub Actions versions — main
+  # =========================================================================
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
       day: "monday"
       time: "09:00"
-    # Group all GitHub Actions updates together
     groups:
       github-actions:
         patterns:
@@ -43,9 +66,32 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+      - "target:main"
     target-branch: "main"
 
-  # Monitor Dev Container features and images
+  # =========================================================================
+  # GitHub Actions versions — develop
+  # =========================================================================
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "09:00"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "target:develop"
+    target-branch: "develop"
+
+  # =========================================================================
+  # Dev Container features and images — main
+  # =========================================================================
   - package-ecosystem: "devcontainers"
     directory: "/"
     schedule:
@@ -56,4 +102,53 @@ updates:
     labels:
       - "dependencies"
       - "devcontainer"
+      - "target:main"
     target-branch: "main"
+
+  # =========================================================================
+  # Dev Container features and images — develop
+  # =========================================================================
+  - package-ecosystem: "devcontainers"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "devcontainer"
+      - "target:develop"
+    target-branch: "develop"
+
+  # =========================================================================
+  # Dockerfile base images — main
+  # =========================================================================
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+      - "target:main"
+    target-branch: "main"
+
+  # =========================================================================
+  # Dockerfile base images — develop
+  # =========================================================================
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+      - "target:develop"
+    target-branch: "develop"
