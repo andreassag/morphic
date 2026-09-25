@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Run Hadolint
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: Dockerfile
           format: sarif
@@ -46,7 +46,7 @@ jobs:
           no-fail: true
 
       - name: Upload Hadolint SARIF to Code Scanning
-        uses: github/codeql-action/upload-sarif@v4.37.9
+        uses: github/codeql-action/upload-sarif@v4.38.1
         with:
           sarif_file: hadolint-results.sarif
           category: "/tool:hadolint"
