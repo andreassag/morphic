@@ -1,5 +1,8 @@
 # Go & Docker targets
-.PHONY: build test run vet tidy hooks docker-up docker-down docker-logs docker-build dev
+.PHONY: build test run vet tidy hooks docker-up docker-down docker-logs docker-build dev automerge
+
+automerge:
+	./.github/scripts/dependabot-automerge.sh
 
 tidy:
 	go mod tidy

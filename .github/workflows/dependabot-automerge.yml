@@ -1,0 +1,88 @@
+name: Dependabot Auto-merge
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  workflow_run:
+    workflows:
+      - "Continuous integration"
+      - "CodeQL Advanced"
+      - "Docker Lint"
+    types:
+      - completed
+  schedule:
+    # Run periodically every 30 minutes as a safety net for any passing PRs
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Specific PR number to inspect and merge (optional, leave empty for all)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run mode (inspect checks without merging)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+jobs:
+  automerge:
+    name: Auto-merge Dependabot PRs
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' && (github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.event.pull_request.head.ref, 'dependabot/'))) ||
+      (github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request' || startsWith(github.event.workflow_run.head_branch, 'dependabot/')))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Make script executable
+        run: chmod +x .github/scripts/dependabot-automerge.sh
+
+      - name: Dependabot metadata
+        id: metadata
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Enable GitHub auto-merge
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+        run: |
+          echo "Attempting to enable GitHub native auto-merge for PR #${{ github.event.pull_request.number }}..."
+          gh pr merge "${{ github.event.pull_request.number }}" --auto --merge --delete-branch || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run verification and merge script
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FLAGS=""
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            FLAGS="--dry-run"
+          fi
+
+          if [[ -n "${{ inputs.pr_number }}" ]]; then
+            echo "Running automerge on specified PR #${{ inputs.pr_number }}..."
+            ./.github/scripts/dependabot-automerge.sh "${{ inputs.pr_number }}" $FLAGS
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "Running automerge check for PR #${{ github.event.pull_request.number }}..."
+            ./.github/scripts/dependabot-automerge.sh "${{ github.event.pull_request.number }}" $FLAGS
+          else
+            echo "Scanning all open Dependabot PRs..."
+            ./.github/scripts/dependabot-automerge.sh $FLAGS
+          fi
