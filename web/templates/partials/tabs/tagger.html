@@ -1,0 +1,158 @@
+{{ define "tagger_tab" }}
+<div class="tab-content" id="tab-tagger">
+<div class="container">
+
+    <!-- Scan Card (Collapsible) -->
+    <div class="card collapsible-card" id="taggerScanCard">
+        <div class="card-header" onclick="toggleCardCollapse('taggerScanCard')">
+            <div class="card-title"><span class="icon">🏷️</span> Metadata Scanner &amp; Tag Editor</div>
+            <button class="collapse-toggle" type="button" aria-label="Toggle section">
+                <span class="chevron">▼</span>
+            </button>
+        </div>
+
+        <div class="card-body">
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="taggerFolder">Folder Path</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="taggerFolder" placeholder="Enter absolute folder path (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('tagger')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="taggerBrowser">
+                        <div class="fb-header">
+                            <span class="fb-path">~</span>
+                            <button class="btn btn-ghost btn-sm" onclick="closeBrowser('tagger')">✕</button>
+                        </div>
+                        <div class="fb-item fb-parent" style="display:none">
+                            <span class="icon">⬆️</span> ..
+                        </div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer">
+                            <button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('tagger')">✓ Use this folder</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row" style="margin-bottom:14px; align-items: center;">
+                <div class="form-group narrow">
+                    <label class="checkbox-label" for="taggerRecursive">
+                        <input type="checkbox" id="taggerRecursive" checked />
+                        Scan subdirectories recursively
+                    </label>
+                </div>
+                <div class="form-group narrow">
+                    <label class="checkbox-label" for="taggerImagesOnly">
+                        <input type="checkbox" id="taggerImagesOnly" checked />
+                        Images &amp; Videos only
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-row" style="justify-content: flex-end; gap: 10px;">
+                <button class="btn btn-primary" id="taggerScanBtn" onclick="taggerScan()">
+                    <span class="icon">🔍</span> Scan Metadata
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Indicator -->
+    <div class="card progress-compact" id="taggerProgressCard" style="display:none;">
+        <div class="progress-compact-row">
+            <span class="spinner" id="taggerSpinner"></span>
+            <span class="progress-compact-msg" id="taggerProgressMsg">Scanning metadata…</span>
+            <div class="progress-bar-track compact">
+                <div class="progress-bar-fill" id="taggerProgressFill" style="width: 0%;"></div>
+            </div>
+            <span class="progress-compact-pct" id="taggerProgressPct">0%</span>
+        </div>
+    </div>
+
+    <!-- Batch Editor Drawer / Card -->
+    <div class="card" id="taggerBatchCard" style="display:none;">
+        <div class="card-header-flex">
+            <div class="card-title">
+                <span class="icon">✏️</span> Batch Metadata Patch (<span id="taggerSelectedCount">0</span> files selected)
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="taggerDeselectAll()">Clear Selection</button>
+        </div>
+        <div class="form-row" style="margin-bottom:12px;">
+            <div class="form-group">
+                <label for="taggerBatchTitle">Title</label>
+                <input type="text" id="taggerBatchTitle" placeholder="Batch title…" />
+            </div>
+            <div class="form-group">
+                <label for="taggerBatchCopyright">Copyright</label>
+                <input type="text" id="taggerBatchCopyright" placeholder="e.g. © 2026 Morphic" />
+            </div>
+        </div>
+        <div class="form-row" style="margin-bottom:12px;">
+            <div class="form-group">
+                <label for="taggerBatchKeywords">Keywords (comma-separated)</label>
+                <input type="text" id="taggerBatchKeywords" placeholder="nature, landscape, vacation" />
+            </div>
+            <div class="form-group narrow">
+                <label for="taggerBatchLat">GPS Latitude</label>
+                <input type="text" id="taggerBatchLat" placeholder="e.g. 37.7749" />
+            </div>
+            <div class="form-group narrow">
+                <label for="taggerBatchLon">GPS Longitude</label>
+                <input type="text" id="taggerBatchLon" placeholder="e.g. -122.4194" />
+            </div>
+        </div>
+        <div class="form-row" style="margin-bottom:12px;">
+            <div class="form-group">
+                <label for="taggerBatchDesc">Description / Caption</label>
+                <input type="text" id="taggerBatchDesc" placeholder="Description or IPTC caption…" />
+            </div>
+        </div>
+        <div class="form-row" style="justify-content: flex-end; gap: 10px;">
+            <button class="btn btn-danger btn-sm" onclick="taggerConfirmStrip()" title="Strip all EXIF/IPTC/XMP for privacy">
+                <span class="icon">🛡️</span> Strip All Metadata (Privacy)
+            </button>
+            <button class="btn btn-success btn-sm" onclick="taggerApplyBatch()">
+                <span class="icon">💾</span> Apply Tags to Selected
+            </button>
+        </div>
+    </div>
+
+    <!-- Results Table Card -->
+    <div class="card" id="taggerResultsCard" style="display:none;">
+        <div class="card-header-flex">
+            <div class="card-title">
+                <span class="icon">📋</span> Media Files (<span id="taggerTotalFiles">0</span>)
+            </div>
+            <div class="form-row" style="gap: 8px;">
+                <input type="text" id="taggerSearch" placeholder="Search filenames/tags…" oninput="taggerFilterResults()" style="width: 220px;" />
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="data-table" id="taggerTable">
+                <thead>
+                    <tr>
+                        <th style="width: 36px;">
+                            <input type="checkbox" id="taggerSelectAll" onchange="taggerToggleSelectAll(this.checked)" aria-label="Select all files" />
+                        </th>
+                        <th style="width: 50px;">Preview</th>
+                        <th>Filename</th>
+                        <th>Date Original</th>
+                        <th>Camera / Make</th>
+                        <th>Title / Description</th>
+                        <th>GPS</th>
+                        <th>Keywords</th>
+                        <th style="text-align: right;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="taggerTableBody">
+                    <!-- Populated dynamically by tagger.js -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+</div>
+{{ end }}

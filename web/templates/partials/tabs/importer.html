@@ -1,0 +1,157 @@
+{{ define "importer_tab" }}
+<div class="tab-content" id="tab-importer">
+<div class="container">
+
+    <!-- Source Selector Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+        <div class="btn-group">
+            <button class="btn active" id="btnImportUrl" onclick="importerSetSource('url')">
+                <span class="icon">🌐</span> Direct URLs
+            </button>
+            <button class="btn" id="btnImportS3" onclick="importerSetSource('s3')">
+                <span class="icon">☁️</span> S3 Storage
+            </button>
+            <button class="btn" id="btnImportDevice" onclick="importerSetSource('device')">
+                <span class="icon">📷</span> Connected Device / Mount
+            </button>
+        </div>
+    </div>
+
+    <!-- Source Configuration Card -->
+    <div class="card">
+        <!-- 1. URLs Form -->
+        <div id="importerSourceUrl">
+            <div class="card-title"><span class="icon">🌐</span> Download Media from Web URLs</div>
+            <div class="form-group" style="margin-bottom:14px;">
+                <label for="importerUrls">Media URLs (one per line, http:// or https://)</label>
+                <textarea id="importerUrls" rows="5" placeholder="https://example.com/photo1.jpg&#10;https://example.com/video1.mp4" style="width:100%; padding:10px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:var(--font-mono); font-size:13px;"></textarea>
+            </div>
+        </div>
+
+        <!-- 2. S3 Storage Form -->
+        <div id="importerSourceS3" style="display:none;">
+            <div class="card-title"><span class="icon">☁️</span> S3-Compatible Object Storage Ingestion</div>
+            <div class="form-row" style="margin-bottom:12px;">
+                <div class="form-group">
+                    <label for="importerS3Endpoint">Endpoint URL (leave blank for AWS S3)</label>
+                    <input type="text" id="importerS3Endpoint" placeholder="https://s3.amazonaws.com or MinIO http://localhost:9000" />
+                </div>
+                <div class="form-group">
+                    <label for="importerS3Region">Region</label>
+                    <input type="text" id="importerS3Region" placeholder="us-east-1" value="us-east-1" />
+                </div>
+            </div>
+            <div class="form-row" style="margin-bottom:12px;">
+                <div class="form-group">
+                    <label for="importerS3Bucket">Bucket Name</label>
+                    <input type="text" id="importerS3Bucket" placeholder="my-media-bucket" />
+                </div>
+                <div class="form-group">
+                    <label for="importerS3Prefix">Prefix / Folder Key</label>
+                    <input type="text" id="importerS3Prefix" placeholder="photos/2026/" />
+                </div>
+            </div>
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="importerS3AccessKey">Access Key ID</label>
+                    <input type="text" id="importerS3AccessKey" placeholder="AKIA..." />
+                </div>
+                <div class="form-group">
+                    <label for="importerS3SecretKey">Secret Access Key</label>
+                    <input type="text" id="importerS3SecretKey" placeholder="Secret Key..." />
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Connected Devices Form -->
+        <div id="importerSourceDevice" style="display:none;">
+            <div class="card-header-flex">
+                <div class="card-title"><span class="icon">📷</span> Connected Devices &amp; Mount Points</div>
+                <button class="btn btn-ghost btn-sm" onclick="importerScanDevices()">⟲ Rescan Devices</button>
+            </div>
+            <div id="importerDeviceList" style="margin-bottom:14px;">
+                <div style="padding:12px; color:var(--text-dim); font-size:13px;">No external devices or camera mounts detected. Specify a mount path below.</div>
+            </div>
+            <div class="form-group">
+                <label for="importerDevicePath">Custom Device Mount Path</label>
+                <input type="text" id="importerDevicePath" placeholder="/run/user/1000/gvfs or /media/usb" />
+            </div>
+        </div>
+
+        <!-- Destination Folder & Chained Workflows -->
+        <div style="border-top:1px solid var(--border); padding-top:16px; margin-top:16px;">
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="importerFolder">Target Local Directory</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="importerFolder" placeholder="Enter destination folder (e.g. /media/inbox)…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('importer')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="importerBrowser">
+                        <div class="fb-header">
+                            <span class="fb-path">~</span>
+                            <button class="btn btn-ghost btn-sm" onclick="closeBrowser('importer')">✕</button>
+                        </div>
+                        <div class="fb-item fb-parent" style="display:none"><span class="icon">⬆️</span> ..</div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer">
+                            <button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('importer')">✓ Use this folder</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chained Workflow Automation -->
+            <div class="form-row" style="margin-bottom:14px; gap:20px;">
+                <label class="checkbox-label" for="importerChainOrganize">
+                    <input type="checkbox" id="importerChainOrganize" />
+                    ⚡ Auto-organize by date (YYYY/YYYY-MM) after import
+                </label>
+                <label class="checkbox-label" for="importerChainConvert">
+                    <input type="checkbox" id="importerChainConvert" />
+                    ⚡ Auto-convert to WebP / MP4 after import
+                </label>
+            </div>
+
+            <div class="form-row" style="justify-content: flex-end;">
+                <button class="btn btn-primary" id="importerStartBtn" onclick="importerStart()">
+                    <span class="icon">🚀</span> Start Ingestion
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Card -->
+    <div class="card progress-compact" id="importerProgressCard" style="display:none;">
+        <div class="progress-compact-row">
+            <span class="spinner"></span>
+            <span class="progress-compact-msg" id="importerProgressMsg">Importing media…</span>
+            <div class="progress-bar-track compact">
+                <div class="progress-bar-fill" id="importerProgressFill" style="width: 0%;"></div>
+            </div>
+            <span class="progress-compact-pct" id="importerProgressPct">0%</span>
+            <button class="btn btn-stop btn-sm" onclick="importerCancel()">Stop</button>
+        </div>
+    </div>
+
+    <!-- Ingestion Results Log -->
+    <div class="card" id="importerResultsCard" style="display:none;">
+        <div class="card-title"><span class="icon">📋</span> Ingestion Log</div>
+        <div class="table-responsive">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Source</th>
+                        <th>Target File</th>
+                        <th>Size</th>
+                    </tr>
+                </thead>
+                <tbody id="importerLogTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+</div>
+{{ end }}

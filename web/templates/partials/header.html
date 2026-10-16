@@ -1,28 +1,137 @@
 {{ define "header" }}
-<header class="app-header">
+<header class="app-header" role="banner">
     <div class="logo-area">
+        <a href="#main-content" class="skip-link">Skip to main content</a>
         <h1>⚡ Morphic</h1>
+        <span class="version-badge">v2.0</span>
     </div>
-    <nav class="tab-bar">
-        <button class="tab-btn active" data-tab="converter" onclick="switchTab('converter')">
-            <span class="tab-icon">🔄</span> Converter
-        </button>
-        <button class="tab-btn" data-tab="dupfinder" onclick="switchTab('dupfinder')">
-            <span class="tab-icon">🔍</span> Dupfinder
-        </button>
-        <button class="tab-btn" data-tab="organizer" onclick="switchTab('organizer')">
-            <span class="tab-icon">📂</span> Organizer
-        </button>
-        <button class="tab-btn" data-tab="trash" onclick="switchTab('trash')">
-            <span class="tab-icon">🗑️</span> Safe Trash
-        </button>
-        <button class="tab-btn" data-tab="history" onclick="switchTab('history')">
-            <span class="tab-icon">📜</span> Audit History
-        </button>
-        <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">
-            <span class="tab-icon">⚙️</span> Watchers &amp; Config
-        </button>
+
+    <nav class="nav-grouped-bar" aria-label="Main Navigation">
+        <!-- Group: Transform -->
+        <div class="nav-group" data-group="transform">
+            <button class="nav-group-btn" id="groupBtn-transform" aria-haspopup="true" aria-expanded="false" title="Media transformation tools">
+                <span class="nav-group-icon">⚡</span>
+                <span class="nav-group-title">Transform</span>
+                <span class="nav-group-active-indicator" id="groupInd-transform"></span>
+                <span class="nav-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="nav-group-menu" id="menu-transform" role="menu" aria-labelledby="groupBtn-transform">
+                <button role="menuitem" class="tab-btn active" data-tab="converter" data-group="transform" onclick="switchTab('converter')">
+                    <span class="tab-icon">🔄</span>
+                    <span class="tab-label">Converter</span>
+                </button>
+                <button role="menuitem" class="tab-btn" data-tab="trimmer" data-group="transform" onclick="switchTab('trimmer')">
+                    <span class="tab-icon">✂️</span>
+                    <span class="tab-label">Trimmer</span>
+                </button>
+                <button role="menuitem" class="tab-btn" data-tab="resizer" data-group="transform" onclick="switchTab('resizer')">
+                    <span class="tab-icon">📐</span>
+                    <span class="tab-label">Resizer</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Group: Analyze -->
+        <div class="nav-group" data-group="analyze">
+            <button class="nav-group-btn" id="groupBtn-analyze" aria-haspopup="true" aria-expanded="false" title="Analysis and library inspection">
+                <span class="nav-group-icon">📊</span>
+                <span class="nav-group-title">Analyze</span>
+                <span class="nav-group-active-indicator" id="groupInd-analyze"></span>
+                <span class="nav-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="nav-group-menu" id="menu-analyze" role="menu" aria-labelledby="groupBtn-analyze">
+                <button role="menuitem" class="tab-btn" data-tab="dupfinder" data-group="analyze" onclick="switchTab('dupfinder')">
+                    <span class="tab-icon">🔍</span>
+                    <span class="tab-label">Dupfinder</span>
+                </button>
+                <button role="menuitem" class="tab-btn" data-tab="inspector" data-group="analyze" onclick="switchTab('inspector')">
+                    <span class="tab-icon">📈</span>
+                    <span class="tab-label">Inspector</span>
+                </button>
+                <button role="menuitem" class="tab-btn" data-tab="gallery" data-group="analyze" onclick="switchTab('gallery')">
+                    <span class="tab-icon">🖼️</span>
+                    <span class="tab-label">Gallery</span>
+                </button>
+                <button role="menuitem" class="tab-btn" data-tab="hasher" data-group="analyze" onclick="switchTab('hasher')">
+                    <span class="tab-icon">🔐</span>
+                    <span class="tab-label">Hasher</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Group: Organize -->
+        <div class="nav-group" data-group="organize">
+            <button class="nav-group-btn" id="groupBtn-organize" aria-haspopup="true" aria-expanded="false" title="Organization and tagging">
+                <span class="nav-group-icon">🗂️</span>
+                <span class="nav-group-title">Organize</span>
+                <span class="nav-group-active-indicator" id="groupInd-organize"></span>
+                <span class="nav-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="nav-group-menu" id="menu-organize" role="menu" aria-labelledby="groupBtn-organize">
+                <button role="menuitem" class="tab-btn" data-tab="organizer" data-group="organize" onclick="switchTab('organizer')">
+                    <span class="tab-icon">📂</span>
+                    <span class="tab-label">Organizer</span>
+                </button>
+                <button role="menuitem" class="tab-btn" data-tab="tagger" data-group="organize" onclick="switchTab('tagger')">
+                    <span class="tab-icon">🏷️</span>
+                    <span class="tab-label">Tagger</span>
+                </button>
+                <button role="menuitem" class="tab-btn" data-tab="syncer" data-group="organize" onclick="switchTab('syncer')">
+                    <span class="tab-icon">🔄</span>
+                    <span class="tab-label">Syncer</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Group: Ingest & Export -->
+        <div class="nav-group" data-group="ingest">
+            <button class="nav-group-btn" id="groupBtn-ingest" aria-haspopup="true" aria-expanded="false" title="Ingestion, archives, and reporting">
+                <span class="nav-group-icon">📥</span>
+                <span class="nav-group-title">Ingest &amp; Export</span>
+                <span class="nav-group-active-indicator" id="groupInd-ingest"></span>
+                <span class="nav-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="nav-group-menu" id="menu-ingest" role="menu" aria-labelledby="groupBtn-ingest">
+                <button role="menuitem" class="tab-btn" data-tab="importer" data-group="ingest" onclick="switchTab('importer')">
+                    <span class="tab-icon">🔗</span>
+                    <span class="tab-label">Importer</span>
+                </button>
+                <button role="menuitem" class="tab-btn" data-tab="archiver" data-group="ingest" onclick="switchTab('archiver')">
+                    <span class="tab-icon">📦</span>
+                    <span class="tab-label">Archiver</span>
+                </button>
+                <button role="menuitem" class="tab-btn" data-tab="reporter" data-group="ingest" onclick="switchTab('reporter')">
+                    <span class="tab-icon">📋</span>
+                    <span class="tab-label">Reporter</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Group: System -->
+        <div class="nav-group" data-group="system">
+            <button class="nav-group-btn" id="groupBtn-system" aria-haspopup="true" aria-expanded="false" title="System, trash, and settings">
+                <span class="nav-group-icon">⚙️</span>
+                <span class="nav-group-title">System</span>
+                <span class="nav-group-active-indicator" id="groupInd-system"></span>
+                <span class="nav-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="nav-group-menu" id="menu-system" role="menu" aria-labelledby="groupBtn-system">
+                <button role="menuitem" class="tab-btn" data-tab="trash" data-group="system" onclick="switchTab('trash')">
+                    <span class="tab-icon">🗑️</span>
+                    <span class="tab-label">Safe Trash</span>
+                </button>
+                <button role="menuitem" class="tab-btn" data-tab="history" data-group="system" onclick="switchTab('history')">
+                    <span class="tab-icon">📜</span>
+                    <span class="tab-label">Audit History</span>
+                </button>
+                <button role="menuitem" class="tab-btn" data-tab="settings" data-group="system" onclick="switchTab('settings')">
+                    <span class="tab-icon">⚙️</span>
+                    <span class="tab-label">Watchers &amp; Config</span>
+                </button>
+            </div>
+        </div>
     </nav>
+
     <div class="header-status">
         <span class="status-indicator online" id="sseIndicator" title="Real-time live streaming connected">● Live</span>
     </div>

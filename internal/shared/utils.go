@@ -211,3 +211,26 @@ func FFmpegCandidates() []string {
 	}
 	return bins
 }
+
+// ExifToolCandidates returns available exiftool binary names in PATH.
+func ExifToolCandidates() []string {
+	var bins []string
+	for _, name := range []string{"exiftool", "exiftool.exe"} {
+		if _, err := exec.LookPath(name); err == nil {
+			bins = append(bins, name)
+		}
+	}
+	return bins
+}
+
+// SevenZipCandidates returns available 7z binary names in PATH.
+func SevenZipCandidates() []string {
+	var bins []string
+	for _, name := range []string{"7z", "7za", "7z.exe"} {
+		if _, err := exec.LookPath(name); err == nil {
+			bins = append(bins, name)
+		}
+	}
+	return bins
+}
+

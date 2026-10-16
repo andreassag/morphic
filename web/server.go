@@ -9,9 +9,15 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/andreassag/morphic/internal/archiver"
 	"github.com/andreassag/morphic/internal/dupfinder"
+	"github.com/andreassag/morphic/internal/hasher"
+	"github.com/andreassag/morphic/internal/importer"
 	"github.com/andreassag/morphic/internal/organizer"
+	"github.com/andreassag/morphic/internal/resizer"
 	"github.com/andreassag/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/syncer"
+	"github.com/andreassag/morphic/internal/tagger"
 	"github.com/andreassag/morphic/internal/trash"
 	"github.com/andreassag/morphic/internal/watcher"
 	"github.com/gin-gonic/gin"
@@ -82,10 +88,28 @@ func SetupRouter(ctx context.Context, pool *pgxpool.Pool) (*gin.Engine, error) {
 	registerWatcherRoutes(r, pool)
 	registerSSERoutes(r)
 
+	// Register 10 TODO module route groups
+	registerTaggerRoutes(r, pool)
+	registerInspectorRoutes(r, pool)
+	registerGalleryRoutes(r, pool)
+	registerTrimmerRoutes(r, pool)
+	registerHasherRoutes(r, pool)
+	registerArchiverRoutes(r, pool)
+	registerImporterRoutes(r, pool)
+	registerResizerRoutes(r, pool)
+	registerReporterRoutes(r, pool)
+	registerSyncerRoutes(r, pool)
+
 	// Start background cleanup tasks & daemons
 	dupfinder.StartCleanup(ctx, 30*time.Minute)
 	organizer.StartCleanup(ctx, 30*time.Minute)
 	StartConverterCleanup(ctx, 30*time.Minute)
+	tagger.StartCleanup(ctx, 30*time.Minute)
+	hasher.StartCleanup(ctx, 30*time.Minute)
+	archiver.StartCleanup(ctx, 30*time.Minute)
+	importer.StartCleanup(ctx, 30*time.Minute)
+	resizer.StartCleanup(ctx, 30*time.Minute)
+	syncer.StartCleanup(ctx, 30*time.Minute)
 
 	if pool != nil {
 		trash.StartAutoPurge(ctx, pool)

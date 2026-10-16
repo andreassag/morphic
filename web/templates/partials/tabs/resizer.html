@@ -1,0 +1,171 @@
+{{ define "resizer_tab" }}
+<div class="tab-content" id="tab-resizer">
+<div class="container">
+
+    <!-- Config Card (Collapsible) -->
+    <div class="card collapsible-card" id="resizerConfigCard">
+        <div class="card-header" onclick="toggleCardCollapse('resizerConfigCard')">
+            <div class="card-title"><span class="icon">📐</span> Batch Image Resizer &amp; Preset Generator</div>
+            <button class="collapse-toggle" type="button" aria-label="Toggle section"><span class="chevron">▼</span></button>
+        </div>
+
+        <div class="card-body">
+            <!-- Source Folder -->
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="resizerFolder">Source Image Directory</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="resizerFolder" placeholder="Enter source folder (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('resizer')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="resizerBrowser">
+                        <div class="fb-header"><span class="fb-path">~</span><button class="btn btn-ghost btn-sm" onclick="closeBrowser('resizer')">✕</button></div>
+                        <div class="fb-item fb-parent" style="display:none"><span class="icon">⬆️</span> ..</div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer"><button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('resizer')">✓ Use this folder</button></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Output Folder -->
+            <div class="form-row" style="margin-bottom:18px;">
+                <div class="form-group">
+                    <label for="resizerOutputFolder">Output Root Directory (Generates Parallel Subfolders)</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="resizerOutputFolder" placeholder="Enter destination folder (e.g. /media/resized)…" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('resizerOut')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="resizerOutputBrowser">
+                        <div class="fb-header"><span class="fb-path">~</span><button class="btn btn-ghost btn-sm" onclick="closeBrowser('resizerOut')">✕</button></div>
+                        <div class="fb-item fb-parent" style="display:none"><span class="icon">⬆️</span> ..</div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer"><button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('resizerOut')">✓ Use this folder</button></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Presets Grid -->
+            <div style="margin-bottom:18px;">
+                <label style="display:block; margin-bottom:8px; font-weight:600; color:var(--text);">Select Target Presets</label>
+                <div class="preset-card-group">
+                    <div class="preset-card selected" onclick="resizerTogglePreset(this, 'web-1920')">
+                        <div class="preset-card-title">
+                            <span>Web Full HD</span>
+                            <input type="checkbox" checked onclick="event.stopPropagation();" aria-label="Preset Web Full HD" />
+                        </div>
+                        <span class="preset-card-dims">1920px max width</span>
+                    </div>
+
+                    <div class="preset-card selected" onclick="resizerTogglePreset(this, 'web-1280')">
+                        <div class="preset-card-title">
+                            <span>Web Laptop</span>
+                            <input type="checkbox" checked onclick="event.stopPropagation();" aria-label="Preset Web Laptop" />
+                        </div>
+                        <span class="preset-card-dims">1280px max width</span>
+                    </div>
+
+                    <div class="preset-card" onclick="resizerTogglePreset(this, 'social-square')">
+                        <div class="preset-card-title">
+                            <span>Social Square</span>
+                            <input type="checkbox" onclick="event.stopPropagation();" aria-label="Preset Social Square" />
+                        </div>
+                        <span class="preset-card-dims">1080 x 1080 px</span>
+                    </div>
+
+                    <div class="preset-card" onclick="resizerTogglePreset(this, 'social-story')">
+                        <div class="preset-card-title">
+                            <span>Social Story / Reel</span>
+                            <input type="checkbox" onclick="event.stopPropagation();" aria-label="Preset Social Story" />
+                        </div>
+                        <span class="preset-card-dims">1080 x 1920 px</span>
+                    </div>
+
+                    <div class="preset-card selected" onclick="resizerTogglePreset(this, 'thumb-300')">
+                        <div class="preset-card-title">
+                            <span>Thumbnail</span>
+                            <input type="checkbox" checked onclick="event.stopPropagation();" aria-label="Preset Thumbnail" />
+                        </div>
+                        <span class="preset-card-dims">300px square</span>
+                    </div>
+
+                    <div class="preset-card" onclick="resizerTogglePreset(this, 'custom')">
+                        <div class="preset-card-title">
+                            <span>Custom Size</span>
+                            <input type="checkbox" id="resizerCustomCheck" onclick="event.stopPropagation();" aria-label="Preset Custom Size" />
+                        </div>
+                        <span class="preset-card-dims">User specified</span>
+                    </div>
+                </div>
+
+                <!-- Custom inputs (if custom checked) -->
+                <div id="resizerCustomInputs" style="display:none; gap:12px; align-items:center; margin-top:8px;">
+                    <input type="number" id="resizerCustomW" placeholder="Width px" style="width:120px;" />
+                    <span style="color:var(--text-dim);">✕</span>
+                    <input type="number" id="resizerCustomH" placeholder="Height px" style="width:120px;" />
+                </div>
+            </div>
+
+            <!-- Encoding & Quality Options -->
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group narrow">
+                    <label for="resizerFormat">Format</label>
+                    <select id="resizerFormat">
+                        <option value="same">Preserve Original Format</option>
+                        <option value="webp" selected>WebP (High efficiency)</option>
+                        <option value="jpeg">JPEG</option>
+                        <option value="png">PNG</option>
+                    </select>
+                </div>
+                <div class="form-group narrow">
+                    <label for="resizerQuality">Quality (<span id="resizerQualityVal">85</span>%)</label>
+                    <input type="range" id="resizerQuality" min="20" max="100" value="85" oninput="document.getElementById('resizerQualityVal').textContent = this.value;" />
+                </div>
+                <div class="form-group narrow">
+                    <label for="resizerAspectMode">Scale Mode</label>
+                    <select id="resizerAspectMode">
+                        <option value="fit" selected>Fit / Contain (Preserve Aspect)</option>
+                        <option value="cover">Cover / Crop Center</option>
+                        <option value="stretch">Exact Stretch</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row" style="justify-content: flex-end;">
+                <button class="btn btn-primary" id="resizerStartBtn" onclick="resizerStart()">
+                    <span class="icon">🚀</span> Start Batch Resizing
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Card -->
+    <div class="card progress-compact" id="resizerProgressCard" style="display:none;">
+        <div class="progress-compact-row">
+            <span class="spinner"></span>
+            <span class="progress-compact-msg" id="resizerProgressMsg">Resizing images…</span>
+            <div class="progress-bar-track compact">
+                <div class="progress-bar-fill" id="resizerProgressFill" style="width: 0%;"></div>
+            </div>
+            <span class="progress-compact-pct" id="resizerProgressPct">0%</span>
+            <button class="btn btn-stop btn-sm" onclick="resizerCancel()">Stop</button>
+        </div>
+    </div>
+
+    <!-- Summary Card -->
+    <div class="card" id="resizerSummaryCard" style="display:none;">
+        <div class="card-title"><span class="icon">🎉</span> Batch Resizing Completed</div>
+        <div class="kpi-grid">
+            <div class="kpi-card success">
+                <span class="kpi-label">Images Processed</span>
+                <span class="kpi-value" id="resizerSummaryCount">0</span>
+            </div>
+            <div class="kpi-card accent">
+                <span class="kpi-label">Output Directory</span>
+                <span class="mono-text" id="resizerSummaryPath">-</span>
+            </div>
+        </div>
+    </div>
+
+</div>
+</div>
+{{ end }}

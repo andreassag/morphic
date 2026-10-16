@@ -1,0 +1,84 @@
+{{ define "reporter_tab" }}
+<div class="tab-content" id="tab-reporter">
+<div class="container">
+
+    <!-- Config Card (Collapsible) -->
+    <div class="card collapsible-card" id="reporterConfigCard">
+        <div class="card-header" onclick="toggleCardCollapse('reporterConfigCard')">
+            <div class="card-title"><span class="icon">📋</span> Shareable Media Reports Generator</div>
+            <button class="collapse-toggle" type="button" aria-label="Toggle section"><span class="chevron">▼</span></button>
+        </div>
+
+        <div class="card-body">
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="reporterFolder">Library Root Folder</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="reporterFolder" placeholder="Enter folder to report on (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('reporter')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="reporterBrowser">
+                        <div class="fb-header"><span class="fb-path">~</span><button class="btn btn-ghost btn-sm" onclick="closeBrowser('reporter')">✕</button></div>
+                        <div class="fb-item fb-parent" style="display:none"><span class="icon">⬆️</span> ..</div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer"><button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('reporter')">✓ Use this folder</button></div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-bottom:14px;">
+                <label style="display:block; margin-bottom:8px; font-weight:600; color:var(--text);">Report Sections to Include</label>
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    <label class="checkbox-label" for="repSecStats">
+                        <input type="checkbox" id="repSecStats" checked />
+                        Storage Analytics (Total bytes, media counts, average file size)
+                    </label>
+                    <label class="checkbox-label" for="repSecFormats">
+                        <input type="checkbox" id="repSecFormats" checked />
+                        Format Breakdown &amp; Extension Distribution
+                    </label>
+                    <label class="checkbox-label" for="repSecDups">
+                        <input type="checkbox" id="repSecDups" checked />
+                        Duplicate Files &amp; Reclaimable Storage Summary
+                    </label>
+                    <label class="checkbox-label" for="repSecAudit">
+                        <input type="checkbox" id="repSecAudit" checked />
+                        Audit History &amp; Recent Conversion Log
+                    </label>
+                    <label class="checkbox-label" for="repSecHighlights">
+                        <input type="checkbox" id="repSecHighlights" checked />
+                        Largest &amp; Oldest Media Highlights
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-row" style="justify-content: flex-end;">
+                <button class="btn btn-primary" id="reporterGenerateBtn" onclick="reporterGenerate()">
+                    <span class="icon">📊</span> Generate Report
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Preview & Export Card -->
+    <div class="card" id="reporterOutputCard" style="display:none;">
+        <div class="card-header-flex">
+            <div class="card-title"><span class="icon">📄</span> Report Preview</div>
+            <div style="display:flex; gap:8px;">
+                <button class="btn btn-ghost btn-sm" onclick="reporterPrintPDF()">
+                    <span class="icon">🖨️</span> Print / Export PDF
+                </button>
+                <button class="btn btn-primary btn-sm" onclick="reporterDownloadHTML()">
+                    <span class="icon">⬇️</span> Download Standalone HTML
+                </button>
+            </div>
+        </div>
+
+        <div class="report-preview-container" id="reporterPreviewContainer">
+            <!-- Dynamic standalone HTML content rendered here -->
+        </div>
+    </div>
+
+</div>
+</div>
+{{ end }}

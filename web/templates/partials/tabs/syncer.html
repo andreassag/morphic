@@ -1,0 +1,134 @@
+{{ define "syncer_tab" }}
+<div class="tab-content" id="tab-syncer">
+<div class="container">
+
+    <!-- Config Card (Collapsible) -->
+    <div class="card collapsible-card" id="syncerConfigCard">
+        <div class="card-header" onclick="toggleCardCollapse('syncerConfigCard')">
+            <div class="card-title"><span class="icon">🔄</span> Directory Synchronization &amp; Mirroring</div>
+            <button class="collapse-toggle" type="button" aria-label="Toggle section"><span class="chevron">▼</span></button>
+        </div>
+
+        <div class="card-body">
+            <!-- Source Folder -->
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="syncerSourceFolder">Source Directory</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="syncerSourceFolder" placeholder="Enter source folder (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('syncerSource')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="syncerSourceBrowser">
+                        <div class="fb-header"><span class="fb-path">~</span><button class="btn btn-ghost btn-sm" onclick="closeBrowser('syncerSource')">✕</button></div>
+                        <div class="fb-item fb-parent" style="display:none"><span class="icon">⬆️</span> ..</div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer"><button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('syncerSource')">✓ Use this folder</button></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Target Folder -->
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="syncerTargetFolder">Destination Directory</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="syncerTargetFolder" placeholder="Enter destination folder (e.g. /media/backup)…" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('syncerTarget')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="syncerTargetBrowser">
+                        <div class="fb-header"><span class="fb-path">~</span><button class="btn btn-ghost btn-sm" onclick="closeBrowser('syncerTarget')">✕</button></div>
+                        <div class="fb-item fb-parent" style="display:none"><span class="icon">⬆️</span> ..</div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer"><button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('syncerTarget')">✓ Use this folder</button></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sync Options -->
+            <div class="form-row" style="margin-bottom:14px; align-items:center;">
+                <div class="form-group narrow">
+                    <label for="syncerMode">Sync Mode</label>
+                    <select id="syncerMode">
+                        <option value="one-way" selected>One-Way Mirror (Source → Target)</option>
+                        <option value="two-way">Two-Way Bidirectional (Newest wins)</option>
+                    </select>
+                </div>
+                <div class="form-group narrow">
+                    <label class="checkbox-label" for="syncerDeleteExtraneous">
+                        <input type="checkbox" id="syncerDeleteExtraneous" />
+                        Delete extraneous files in target (Exact mirror)
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-row" style="justify-content: flex-end;">
+                <button class="btn btn-primary" id="syncerPlanBtn" onclick="syncerPlan()">
+                    <span class="icon">🔍</span> Analyze &amp; Plan Sync
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Card -->
+    <div class="card progress-compact" id="syncerProgressCard" style="display:none;">
+        <div class="progress-compact-row">
+            <span class="spinner"></span>
+            <span class="progress-compact-msg" id="syncerProgressMsg">Syncing files…</span>
+            <div class="progress-bar-track compact">
+                <div class="progress-bar-fill" id="syncerProgressFill" style="width: 0%;"></div>
+            </div>
+            <span class="progress-compact-pct" id="syncerProgressPct">0%</span>
+            <button class="btn btn-stop btn-sm" onclick="syncerCancel()">Stop</button>
+        </div>
+    </div>
+
+    <!-- Diff Plan Preview Card -->
+    <div class="card" id="syncerPlanCard" style="display:none;">
+        <div class="card-header-flex">
+            <div class="card-title"><span class="icon">📋</span> Synchronization Diff Plan</div>
+            <div style="display:flex; gap:8px;">
+                <button class="btn btn-success" id="syncerExecBtn" onclick="syncerExecute()">
+                    <span class="icon">🚀</span> Execute Sync Plan
+                </button>
+            </div>
+        </div>
+
+        <!-- Plan Metric Summary -->
+        <div class="kpi-grid" style="margin-bottom:16px;">
+            <div class="kpi-card success">
+                <span class="kpi-label">To Copy (New)</span>
+                <span class="kpi-value" id="syncerKpiCopy">0</span>
+            </div>
+            <div class="kpi-card accent">
+                <span class="kpi-label">To Update (Changed)</span>
+                <span class="kpi-value" id="syncerKpiUpdate">0</span>
+            </div>
+            <div class="kpi-card danger">
+                <span class="kpi-label">To Delete (Extra)</span>
+                <span class="kpi-value" id="syncerKpiDelete">0</span>
+            </div>
+            <div class="kpi-card warning">
+                <span class="kpi-label">Conflicts</span>
+                <span class="kpi-value" id="syncerKpiConflict">0</span>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="data-table" id="syncerDiffTable">
+                <thead>
+                    <tr>
+                        <th style="width: 100px;">Action</th>
+                        <th>Relative Path</th>
+                        <th>Source Size / MTime</th>
+                        <th>Target Size / MTime</th>
+                        <th>Reason</th>
+                    </tr>
+                </thead>
+                <tbody id="syncerDiffTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+</div>
+{{ end }}

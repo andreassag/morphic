@@ -3,25 +3,49 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Morphic</title>
+    <title>Morphic - High-Density Media Toolkit</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
+<a href="#main-content" class="skip-link">Skip to main content</a>
 
 {{ template "header" . }}
 
-<div class="toast-container" id="toastContainer"></div>
+<div class="toast-container" id="toastContainer" aria-live="polite"></div>
 
-{{ template "converter_tab" . }}
-{{ template "dupfinder_tab" . }}
-{{ template "organizer_tab" . }}
-{{ template "trash_tab" . }}
-{{ template "history_tab" . }}
-{{ template "settings_tab" . }}
+<main id="main-content">
+    <!-- Transform Workflow -->
+    {{ template "converter_tab" . }}
+    {{ template "trimmer_tab" . }}
+    {{ template "resizer_tab" . }}
 
+    <!-- Analyze Workflow -->
+    {{ template "dupfinder_tab" . }}
+    {{ template "inspector_tab" . }}
+    {{ template "gallery_tab" . }}
+    {{ template "hasher_tab" . }}
+
+    <!-- Organize Workflow -->
+    {{ template "organizer_tab" . }}
+    {{ template "tagger_tab" . }}
+    {{ template "syncer_tab" . }}
+
+    <!-- Ingest & Export Workflow -->
+    {{ template "importer_tab" . }}
+    {{ template "archiver_tab" . }}
+    {{ template "reporter_tab" . }}
+
+    <!-- System Workflow -->
+    {{ template "trash_tab" . }}
+    {{ template "history_tab" . }}
+    {{ template "settings_tab" . }}
+</main>
+
+<!-- Modals -->
 {{ template "compare_modal" . }}
 {{ template "preview_modal" . }}
 {{ template "delete_modal" . }}
+{{ template "lightbox_modal" . }}
 
 <script type="module" src="/static/js/main.js"></script>
 </body>
