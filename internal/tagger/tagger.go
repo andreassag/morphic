@@ -48,12 +48,51 @@ type MetadataPatch struct {
 
 // TaggerJob tracks asynchronous tagging operations.
 type TaggerJob struct {
+	mu      sync.RWMutex
 	shared.Job
 	Type    string         `json:"type"` // "scan", "update", "strip"
 	Folder  string         `json:"folder,omitempty"`
 	Items   []MetadataItem `json:"items,omitempty"`
 	Updated int            `json:"updated,omitempty"`
 	Failed  int            `json:"failed,omitempty"`
+}
+
+// SetDoneScan marks the job as done and records scanned metadata items.
+func (j *TaggerJob) SetDoneScan(items []MetadataItem) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusDone
+	j.Progress = 1.0
+	j.Items = items
+	j.DoneAt = time.Now()
+}
+
+// SetFailed marks the job as failed with an error message.
+func (j *TaggerJob) SetFailed(errMsg string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusFailed
+	j.Error = errMsg
+	j.DoneAt = time.Now()
+}
+
+// Snapshot returns a thread-safe copy of the job's state.
+func (j *TaggerJob) Snapshot() TaggerJob {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	var itemsCopy []MetadataItem
+	if j.Items != nil {
+		itemsCopy = make([]MetadataItem, len(j.Items))
+		copy(itemsCopy, j.Items)
+	}
+	return TaggerJob{
+		Job:     j.Job,
+		Type:    j.Type,
+		Folder:  j.Folder,
+		Items:   itemsCopy,
+		Updated: j.Updated,
+		Failed:  j.Failed,
+	}
 }
 
 var (

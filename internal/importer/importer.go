@@ -53,10 +53,47 @@ type DeviceImportRequest struct {
 
 // ImporterJob tracks background import progress.
 type ImporterJob struct {
+	mu            sync.RWMutex
 	shared.Job
 	Type          string   `json:"type"` // "url", "s3", "device"
 	TargetDir     string   `json:"target_dir"`
 	ImportedFiles []string `json:"imported_files"`
+}
+
+// SetDone marks the job as done and records imported files.
+func (j *ImporterJob) SetDone(files []string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusDone
+	j.Progress = 1.0
+	j.ImportedFiles = files
+	j.DoneAt = time.Now()
+}
+
+// SetFailed marks the job as failed with an error message.
+func (j *ImporterJob) SetFailed(errMsg string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusFailed
+	j.Error = errMsg
+	j.DoneAt = time.Now()
+}
+
+// Snapshot returns a thread-safe copy of the job's state.
+func (j *ImporterJob) Snapshot() ImporterJob {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	var filesCopy []string
+	if j.ImportedFiles != nil {
+		filesCopy = make([]string, len(j.ImportedFiles))
+		copy(filesCopy, j.ImportedFiles)
+	}
+	return ImporterJob{
+		Job:           j.Job,
+		Type:          j.Type,
+		TargetDir:     j.TargetDir,
+		ImportedFiles: filesCopy,
+	}
 }
 
 var jobs = shared.NewJobStore[ImporterJob]()

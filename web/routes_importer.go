@@ -47,12 +47,9 @@ func handleImporterURL(c *gin.Context, pool *pgxpool.Pool) {
 		defer cancel()
 		f, err := importer.ImportFromURL(jobCtx, req)
 		if err != nil {
-			job.Status = shared.JobStatusFailed
-			job.Error = err.Error()
+			job.SetFailed(err.Error())
 		} else {
-			job.Status = shared.JobStatusDone
-			job.Progress = 1.0
-			job.ImportedFiles = []string{f}
+			job.SetDone([]string{f})
 			if pool != nil {
 				_, _ = database.LogOperation(context.Background(), pool, database.AuditOperation{
 					Operation: "import_url",
@@ -63,7 +60,6 @@ func handleImporterURL(c *gin.Context, pool *pgxpool.Pool) {
 				})
 			}
 		}
-		job.DoneAt = time.Now()
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID})
@@ -91,12 +87,9 @@ func handleImporterS3(c *gin.Context, pool *pgxpool.Pool) {
 		defer cancel()
 		files, err := importer.ImportFromS3(jobCtx, req)
 		if err != nil {
-			job.Status = shared.JobStatusFailed
-			job.Error = err.Error()
+			job.SetFailed(err.Error())
 		} else {
-			job.Status = shared.JobStatusDone
-			job.Progress = 1.0
-			job.ImportedFiles = files
+			job.SetDone(files)
 			if pool != nil {
 				_, _ = database.LogOperation(context.Background(), pool, database.AuditOperation{
 					Operation: "import_s3",
@@ -107,7 +100,6 @@ func handleImporterS3(c *gin.Context, pool *pgxpool.Pool) {
 				})
 			}
 		}
-		job.DoneAt = time.Now()
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID})
@@ -144,12 +136,9 @@ func handleImporterDevice(c *gin.Context, pool *pgxpool.Pool) {
 		defer cancel()
 		files, err := importer.ImportFromDevice(jobCtx, req)
 		if err != nil {
-			job.Status = shared.JobStatusFailed
-			job.Error = err.Error()
+			job.SetFailed(err.Error())
 		} else {
-			job.Status = shared.JobStatusDone
-			job.Progress = 1.0
-			job.ImportedFiles = files
+			job.SetDone(files)
 			if pool != nil {
 				_, _ = database.LogOperation(context.Background(), pool, database.AuditOperation{
 					Operation: "import_device",
@@ -160,7 +149,6 @@ func handleImporterDevice(c *gin.Context, pool *pgxpool.Pool) {
 				})
 			}
 		}
-		job.DoneAt = time.Now()
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID})
@@ -173,7 +161,7 @@ func handleImporterStatus(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
-	c.JSON(http.StatusOK, job)
+	c.JSON(http.StatusOK, job.Snapshot())
 }
 
 func handleImporterCancel(c *gin.Context) {

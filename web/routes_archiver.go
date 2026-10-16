@@ -51,15 +51,12 @@ func handleArchiverCreate(c *gin.Context, pool *pgxpool.Pool) {
 	go func() {
 		defer cancel()
 		files, err := archiver.CreateArchive(jobCtx, req, func(written, total int64) {
-			job.TotalBytes = written
+			job.SetBytesWritten(written)
 		})
 		if err != nil {
-			job.Status = shared.JobStatusFailed
-			job.Error = err.Error()
+			job.SetFailed(err.Error())
 		} else {
-			job.Status = shared.JobStatusDone
-			job.Progress = 1.0
-			job.CreatedFiles = files
+			job.SetDone(files)
 			if pool != nil {
 				_, _ = database.LogOperation(context.Background(), pool, database.AuditOperation{
 					Operation: "create_archive",
@@ -70,7 +67,6 @@ func handleArchiverCreate(c *gin.Context, pool *pgxpool.Pool) {
 				})
 			}
 		}
-		job.DoneAt = time.Now()
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID})
@@ -83,7 +79,7 @@ func handleArchiverStatus(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
-	c.JSON(http.StatusOK, job)
+	c.JSON(http.StatusOK, job.Snapshot())
 }
 
 func handleArchiverCancel(c *gin.Context) {
@@ -102,12 +98,13 @@ func handleArchiverDownload(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
-	if job.Status != shared.JobStatusDone || len(job.CreatedFiles) == 0 {
+	snap := job.Snapshot()
+	if snap.Status != shared.JobStatusDone || len(snap.CreatedFiles) == 0 {
 		respondError(c, http.StatusBadRequest, "NOT_READY", "Archive is not ready for download")
 		return
 	}
 
-	target := job.CreatedFiles[0]
+	target := snap.CreatedFiles[0]
 	if _, err := os.Stat(target); err != nil {
 		respondError(c, http.StatusNotFound, "FILE_NOT_FOUND", "Archive file missing on disk")
 		return

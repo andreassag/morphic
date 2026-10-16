@@ -57,19 +57,12 @@ func handleResizerBatch(c *gin.Context, pool *pgxpool.Pool) {
 	go func() {
 		defer cancel()
 		files, err := resizer.BatchResize(jobCtx, req, func(done, total int) {
-			job.TotalImages = total
-			job.ProcessedCount = done
-			if total > 0 {
-				job.Progress = float64(done) / float64(total)
-			}
+			job.SetProgress(done, total)
 		})
 		if err != nil {
-			job.Status = shared.JobStatusFailed
-			job.Error = err.Error()
+			job.SetFailed(err.Error())
 		} else {
-			job.Status = shared.JobStatusDone
-			job.Progress = 1.0
-			job.GeneratedFiles = files
+			job.SetDone(files)
 			if pool != nil {
 				_, _ = database.LogOperation(context.Background(), pool, database.AuditOperation{
 					Operation: "batch_resize",
@@ -80,7 +73,6 @@ func handleResizerBatch(c *gin.Context, pool *pgxpool.Pool) {
 				})
 			}
 		}
-		job.DoneAt = time.Now()
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID})
@@ -93,7 +85,7 @@ func handleResizerStatus(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
-	c.JSON(http.StatusOK, job)
+	c.JSON(http.StatusOK, job.Snapshot())
 }
 
 func handleResizerCancel(c *gin.Context) {

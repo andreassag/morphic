@@ -55,14 +55,10 @@ func handleTaggerScan(c *gin.Context) {
 		defer cancel()
 		items, err := tagger.ScanMetadata(jobCtx, safeDir, req.Recursive)
 		if err != nil {
-			job.Status = shared.JobStatusFailed
-			job.Error = err.Error()
+			job.SetFailed(err.Error())
 		} else {
-			job.Status = shared.JobStatusDone
-			job.Progress = 1.0
-			job.Items = items
+			job.SetDoneScan(items)
 		}
-		job.DoneAt = time.Now()
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID})
@@ -171,7 +167,7 @@ func handleTaggerStatus(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
-	c.JSON(http.StatusOK, job)
+	c.JSON(http.StatusOK, job.Snapshot())
 }
 
 func handleTaggerCancel(c *gin.Context) {

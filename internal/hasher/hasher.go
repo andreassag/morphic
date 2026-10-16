@@ -49,9 +49,54 @@ type VerificationResult struct {
 
 // HasherJob represents a background hashing task.
 type HasherJob struct {
+	mu        sync.RWMutex
 	shared.Job
 	TargetDir string         `json:"target_dir"`
 	Items     []FileHashItem `json:"items"`
+}
+
+// SetProgress updates the job's progress in a thread-safe manner.
+func (j *HasherJob) SetProgress(done, total int) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if total > 0 {
+		j.Progress = float64(done) / float64(total)
+	}
+}
+
+// SetDone marks the job as done and stores items in a thread-safe manner.
+func (j *HasherJob) SetDone(items []FileHashItem) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusDone
+	j.Progress = 1.0
+	j.Items = items
+	j.DoneAt = time.Now()
+}
+
+// SetFailed marks the job as failed with an error message in a thread-safe manner.
+func (j *HasherJob) SetFailed(errMsg string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusFailed
+	j.Error = errMsg
+	j.DoneAt = time.Now()
+}
+
+// Snapshot returns a thread-safe copy of the job's current state.
+func (j *HasherJob) Snapshot() HasherJob {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	var itemsCopy []FileHashItem
+	if j.Items != nil {
+		itemsCopy = make([]FileHashItem, len(j.Items))
+		copy(itemsCopy, j.Items)
+	}
+	return HasherJob{
+		Job:       j.Job,
+		TargetDir: j.TargetDir,
+		Items:     itemsCopy,
+	}
 }
 
 var jobs = shared.NewJobStore[HasherJob]()
@@ -217,6 +262,7 @@ func HashDirectory(ctx context.Context, folder string, computeMD5, computeSHA256
 
 	var wg sync.WaitGroup
 	var completed int64
+	var progressMu sync.Mutex
 
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
@@ -230,7 +276,9 @@ func HashDirectory(ctx context.Context, folder string, computeMD5, computeSHA256
 				resultsCh <- item
 				done := atomic.AddInt64(&completed, 1)
 				if onProgress != nil {
+					progressMu.Lock()
 					onProgress(int(done), total)
+					progressMu.Unlock()
 				}
 			}
 		}()

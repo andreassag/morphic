@@ -30,9 +30,52 @@ type ArchiveRequest struct {
 
 // ArchiverJob tracks background compression progress.
 type ArchiverJob struct {
+	mu           sync.RWMutex
 	shared.Job
 	CreatedFiles []string `json:"created_files"`
 	TotalBytes   int64    `json:"total_bytes"`
+}
+
+// SetBytesWritten updates the total bytes written in a thread-safe manner.
+func (j *ArchiverJob) SetBytesWritten(written int64) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.TotalBytes = written
+}
+
+// SetDone marks the job as done and records created files.
+func (j *ArchiverJob) SetDone(files []string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusDone
+	j.Progress = 1.0
+	j.CreatedFiles = files
+	j.DoneAt = time.Now()
+}
+
+// SetFailed marks the job as failed with an error message.
+func (j *ArchiverJob) SetFailed(errMsg string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusFailed
+	j.Error = errMsg
+	j.DoneAt = time.Now()
+}
+
+// Snapshot returns a thread-safe copy of the job's state.
+func (j *ArchiverJob) Snapshot() ArchiverJob {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	var filesCopy []string
+	if j.CreatedFiles != nil {
+		filesCopy = make([]string, len(j.CreatedFiles))
+		copy(filesCopy, j.CreatedFiles)
+	}
+	return ArchiverJob{
+		Job:          j.Job,
+		CreatedFiles: filesCopy,
+		TotalBytes:   j.TotalBytes,
+	}
 }
 
 var jobs = shared.NewJobStore[ArchiverJob]()

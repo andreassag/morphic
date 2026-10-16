@@ -35,12 +35,62 @@ type BatchResizeRequest struct {
 
 // ResizerJob tracks the background batch resizing job.
 type ResizerJob struct {
+	mu             sync.RWMutex
 	shared.Job
 	SourceDir      string   `json:"source_dir"`
 	DestinationDir string   `json:"destination_dir"`
 	TotalImages    int      `json:"total_images"`
 	ProcessedCount int      `json:"processed_count"`
 	GeneratedFiles []string `json:"generated_files"`
+}
+
+// SetProgress updates the job's processed count, total, and progress percentage.
+func (j *ResizerJob) SetProgress(done, total int) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.TotalImages = total
+	j.ProcessedCount = done
+	if total > 0 {
+		j.Progress = float64(done) / float64(total)
+	}
+}
+
+// SetDone marks the job as done and stores generated files.
+func (j *ResizerJob) SetDone(files []string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusDone
+	j.Progress = 1.0
+	j.GeneratedFiles = files
+	j.DoneAt = time.Now()
+}
+
+// SetFailed marks the job as failed with an error message.
+func (j *ResizerJob) SetFailed(errMsg string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusFailed
+	j.Error = errMsg
+	j.DoneAt = time.Now()
+}
+
+// Snapshot returns a thread-safe copy of the job's state.
+func (j *ResizerJob) Snapshot() ResizerJob {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	var filesCopy []string
+	if j.GeneratedFiles != nil {
+		filesCopy = make([]string, len(j.GeneratedFiles))
+		copy(filesCopy, j.GeneratedFiles)
+	}
+	return ResizerJob{
+		Job:            j.Job,
+		SourceDir:      j.SourceDir,
+		DestinationDir: j.DestinationDir,
+		TotalImages:    j.TotalImages,
+		ProcessedCount: j.ProcessedCount,
+		GeneratedFiles: filesCopy,
+	}
 }
 
 var jobs = shared.NewJobStore[ResizerJob]()
@@ -187,6 +237,7 @@ func BatchResize(ctx context.Context, req BatchResizeRequest, onProgress func(do
 	var wg sync.WaitGroup
 	var completed int64
 	var generatedMu sync.Mutex
+	var progressMu sync.Mutex
 	var generatedFiles []string
 
 	for w := 0; w < numWorkers; w++ {
@@ -233,7 +284,9 @@ func BatchResize(ctx context.Context, req BatchResizeRequest, onProgress func(do
 
 				done := atomic.AddInt64(&completed, 1)
 				if onProgress != nil {
+					progressMu.Lock()
 					onProgress(int(done), total)
+					progressMu.Unlock()
 				}
 			}
 		}()

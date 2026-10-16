@@ -54,8 +54,46 @@ type SyncPlan struct {
 
 // SyncerJob tracks execution progress of a sync operation.
 type SyncerJob struct {
+	mu sync.RWMutex
 	shared.Job
 	Plan *SyncPlan `json:"plan"`
+}
+
+// SetProgress updates the progress of the syncer job.
+func (j *SyncerJob) SetProgress(done, total int) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if total > 0 {
+		j.Progress = float64(done) / float64(total)
+	}
+}
+
+// SetDone marks the job as done.
+func (j *SyncerJob) SetDone() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusDone
+	j.Progress = 1.0
+	j.DoneAt = time.Now()
+}
+
+// SetFailed marks the job as failed with an error message.
+func (j *SyncerJob) SetFailed(errMsg string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Status = shared.JobStatusFailed
+	j.Error = errMsg
+	j.DoneAt = time.Now()
+}
+
+// Snapshot returns a thread-safe copy of the job's state.
+func (j *SyncerJob) Snapshot() SyncerJob {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return SyncerJob{
+		Job:  j.Job,
+		Plan: j.Plan,
+	}
 }
 
 var (

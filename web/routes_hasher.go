@@ -73,19 +73,13 @@ func handleHasherGenerate(c *gin.Context) {
 	go func() {
 		defer cancel()
 		items, err := hasher.HashDirectory(jobCtx, safeDir, computeMD5, computeSHA256, computeXXHash, func(done, total int) {
-			if total > 0 {
-				job.Progress = float64(done) / float64(total)
-			}
+			job.SetProgress(done, total)
 		})
 		if err != nil {
-			job.Status = shared.JobStatusFailed
-			job.Error = err.Error()
+			job.SetFailed(err.Error())
 		} else {
-			job.Status = shared.JobStatusDone
-			job.Progress = 1.0
-			job.Items = items
+			job.SetDone(items)
 		}
-		job.DoneAt = time.Now()
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID})
@@ -98,7 +92,7 @@ func handleHasherStatus(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
-	c.JSON(http.StatusOK, job)
+	c.JSON(http.StatusOK, job.Snapshot())
 }
 
 func handleHasherCancel(c *gin.Context) {
@@ -117,13 +111,14 @@ func handleHasherExport(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "NOT_FOUND", "Job not found")
 		return
 	}
-	if job.Status != shared.JobStatusDone {
+	snap := job.Snapshot()
+	if snap.Status != shared.JobStatusDone {
 		respondError(c, http.StatusBadRequest, "JOB_NOT_READY", "Job is not completed yet")
 		return
 	}
 
 	format := c.DefaultQuery("format", "sha256")
-	manifest, err := hasher.ExportManifest(job.Items, format)
+	manifest, err := hasher.ExportManifest(snap.Items, format)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "EXPORT_FAILED", err.Error())
 		return
