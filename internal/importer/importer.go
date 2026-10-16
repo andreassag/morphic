@@ -54,8 +54,8 @@ type DeviceImportRequest struct {
 // ImporterJob tracks background import progress.
 type ImporterJob struct {
 	shared.Job
-	Type         string   `json:"type"` // "url", "s3", "device"
-	TargetDir    string   `json:"target_dir"`
+	Type          string   `json:"type"` // "url", "s3", "device"
+	TargetDir     string   `json:"target_dir"`
 	ImportedFiles []string `json:"imported_files"`
 }
 

@@ -233,4 +233,3 @@ func SevenZipCandidates() []string {
 	}
 	return bins
 }
-

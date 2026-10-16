@@ -23,43 +23,43 @@ type FileStatItem struct {
 
 // AgeBucketStats holds size and count distributions across file ages.
 type AgeBucketStats struct {
-	Count int `json:"count"`
+	Count int   `json:"count"`
 	Bytes int64 `json:"bytes"`
 }
 
 // AgeBuckets breaks down metrics by file age.
 type AgeBuckets struct {
-	Under30d     AgeBucketStats `json:"under_30d"`
+	Under30d      AgeBucketStats `json:"under_30d"`
 	From30dTo180d AgeBucketStats `json:"from_30d_to_180d"`
 	From180dTo1y  AgeBucketStats `json:"from_180d_to_1y"`
-	Over1y       AgeBucketStats `json:"over_1y"`
+	Over1y        AgeBucketStats `json:"over_1y"`
 }
 
 // TreeNode represents a node in the hierarchical folder tree.
 type TreeNode struct {
-	Name           string            `json:"name"`
-	Path           string            `json:"path"`
-	Size           int64             `json:"size"`
-	FileCount      int               `json:"file_count"`
-	Children       []*TreeNode       `json:"children,omitempty"`
-	CategoryCounts map[string]int    `json:"category_counts,omitempty"`
-	ExtCounts      map[string]int    `json:"ext_counts,omitempty"`
+	Name           string         `json:"name"`
+	Path           string         `json:"path"`
+	Size           int64          `json:"size"`
+	FileCount      int            `json:"file_count"`
+	Children       []*TreeNode    `json:"children,omitempty"`
+	CategoryCounts map[string]int `json:"category_counts,omitempty"`
+	ExtCounts      map[string]int `json:"ext_counts,omitempty"`
 }
 
 // InspectResult is the complete storage analytics report.
 type InspectResult struct {
-	RootPath           string            `json:"root_path"`
-	TotalSize          int64             `json:"total_size"`
-	FileCount          int               `json:"file_count"`
-	MediaCount         int               `json:"media_count"`
-	CategorySizes      map[string]int64  `json:"category_sizes"`
-	CategoryCounts     map[string]int    `json:"category_counts"`
-	ExtensionSizes     map[string]int64  `json:"extension_sizes"`
-	ExtensionCounts    map[string]int    `json:"extension_counts"`
-	AgeBreakdown       AgeBuckets        `json:"age_breakdown"`
-	LargestFiles       []FileStatItem    `json:"largest_files"`
-	OldestMediaFiles   []FileStatItem    `json:"oldest_media_files"`
-	Tree               *TreeNode         `json:"tree"`
+	RootPath         string           `json:"root_path"`
+	TotalSize        int64            `json:"total_size"`
+	FileCount        int              `json:"file_count"`
+	MediaCount       int              `json:"media_count"`
+	CategorySizes    map[string]int64 `json:"category_sizes"`
+	CategoryCounts   map[string]int   `json:"category_counts"`
+	ExtensionSizes   map[string]int64 `json:"extension_sizes"`
+	ExtensionCounts  map[string]int   `json:"extension_counts"`
+	AgeBreakdown     AgeBuckets       `json:"age_breakdown"`
+	LargestFiles     []FileStatItem   `json:"largest_files"`
+	OldestMediaFiles []FileStatItem   `json:"oldest_media_files"`
+	Tree             *TreeNode        `json:"tree"`
 }
 
 // CategorizeFile determines if a file is an image, video, or other.

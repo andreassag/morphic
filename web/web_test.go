@@ -493,4 +493,3 @@ func TestNewModulesEndpoints(t *testing.T) {
 		}
 	})
 }
-
