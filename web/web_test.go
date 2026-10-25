@@ -62,6 +62,9 @@ func TestSystemInfoEndpoint(t *testing.T) {
 	if resp["version"] == nil || resp["platform"] == nil {
 		t.Error("expected version and platform in system_info response")
 	}
+	if resp["exiftool"] == nil || resp["sevenzip"] == nil {
+		t.Error("expected exiftool and sevenzip in system_info response")
+	}
 }
 
 func TestConverterFormatsEndpoint(t *testing.T) {
@@ -552,4 +555,129 @@ func TestOrganizerPlanAndExecuteFlow(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("GET status returned %d, want 200", w.Code)
 	}
+}
+
+func TestNewModulesEndpoints(t *testing.T) {
+	r := setupTestRouter(t)
+	assets, _ := filepath.Abs("../assets/test")
+
+	// 1. Tagger Scan
+	t.Run("TaggerScan", func(t *testing.T) {
+		body := fmt.Sprintf(`{"folder": "%s", "recursive": false}`, assets)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/api/tagger/scan", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusAccepted {
+			t.Errorf("expected 202 Accepted, got %d", w.Code)
+		}
+	})
+
+	// 2. Inspector Analyze
+	t.Run("InspectorAnalyze", func(t *testing.T) {
+		body := fmt.Sprintf(`{"folder": "%s", "max_top_n": 5}`, assets)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/api/inspector/analyze", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 OK, got %d", w.Code)
+		}
+	})
+
+	// 3. Gallery Items
+	t.Run("GalleryItems", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", fmt.Sprintf("/api/gallery/items?folder=%s&limit=5", assets), nil)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 OK, got %d", w.Code)
+		}
+	})
+
+	// 4. Trimmer Preview
+	t.Run("TrimmerPreview", func(t *testing.T) {
+		sampleJpg := filepath.Join(assets, "sample1.jpg")
+		body := fmt.Sprintf(`{"source_path": "%s", "resize_w": 50, "resize_h": 50}`, sampleJpg)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/api/trimmer/preview", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 OK, got %d", w.Code)
+		}
+	})
+
+	// 5. Hasher Generate
+	t.Run("HasherGenerate", func(t *testing.T) {
+		body := fmt.Sprintf(`{"folder": "%s", "algorithms": ["sha256", "md5"]}`, assets)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/api/hasher/generate", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusAccepted {
+			t.Errorf("expected 202 Accepted, got %d", w.Code)
+		}
+	})
+
+	// 6. Archiver Create
+	t.Run("ArchiverCreate", func(t *testing.T) {
+		tmpDest := t.TempDir()
+		body := fmt.Sprintf(`{"source_paths": ["%s"], "destination_dir": "%s", "format": "zip", "level": "fast"}`, assets, tmpDest)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/api/archiver/create", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusAccepted {
+			t.Errorf("expected 202 Accepted, got %d", w.Code)
+		}
+	})
+
+	// 7. Importer Devices
+	t.Run("ImporterDevices", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/api/importer/devices", nil)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 OK, got %d", w.Code)
+		}
+	})
+
+	// 8. Resizer Batch
+	t.Run("ResizerBatch", func(t *testing.T) {
+		tmpDest := t.TempDir()
+		body := fmt.Sprintf(`{"source_dir": "%s", "destination_dir": "%s", "presets": ["thumbnails"]}`, assets, tmpDest)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/api/resizer/batch", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusAccepted {
+			t.Errorf("expected 202 Accepted, got %d", w.Code)
+		}
+	})
+
+	// 9. Reporter Generate
+	t.Run("ReporterGenerate", func(t *testing.T) {
+		body := fmt.Sprintf(`{"folder": "%s", "include_storage": true}`, assets)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/api/reporter/generate", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 OK, got %d", w.Code)
+		}
+	})
+
+	// 10. Syncer Plan
+	t.Run("SyncerPlan", func(t *testing.T) {
+		targetDir := t.TempDir()
+		body := fmt.Sprintf(`{"source_dir": "%s", "target_dir": "%s", "mode": "one-way"}`, assets, targetDir)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/api/syncer/plan", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 OK, got %d", w.Code)
+		}
+	})
 }

@@ -3,6 +3,7 @@ package shared
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,3 +92,15 @@ func TestValidateMediaFilePath(t *testing.T) {
 		assert.ErrorIs(t, err, ErrNotARegularFile)
 	})
 }
+
+func TestTranslateHostPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping linux host translation on windows")
+	}
+	assert.Equal(t, "/mnt/d/Photos", TranslateHostPath(`D:\Photos`))
+	assert.Equal(t, "/mnt/c/Users/andre", TranslateHostPath(`C:/Users/andre`))
+	assert.Equal(t, "/home/andre", TranslateHostPath(`\\wsl$\Ubuntu\home\andre`))
+	assert.Equal(t, "/home/andre", TranslateHostPath(`//wsl.localhost/Ubuntu/home/andre`))
+	assert.Equal(t, "/var/media", TranslateHostPath("/var/media"))
+}
+

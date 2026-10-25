@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -20,28 +19,11 @@ func registerBrowseRoutes(r *gin.Engine) {
 	r.POST("/api/browse/resolve", handleBrowseResolve)
 }
 
-var (
-	// windowsDrivePathRe matches host paths such as D:\Photos or d:/Photos.
-	windowsDrivePathRe = regexp.MustCompile(`^([A-Za-z]):(?:[\\/](.*))?$`)
-	// wslUNCPathRe matches \\wsl$\Distro\home\x and \\wsl.localhost\Distro\home\x.
-	wslUNCPathRe = regexp.MustCompile(`(?i)^[\\/]{2}wsl(?:\$|\.localhost)[\\/][^\\/]+(?:[\\/](.*))?$`)
-)
-
 // translateHostPath converts paths copied from a Windows file explorer (e.g. D:\Photos or
 // \\wsl$\Ubuntu\home\me) into their equivalent on a Linux/macOS runner (/mnt/d/Photos, /home/me).
 // This lets users paste paths from their client OS even when Morphic runs in Docker/WSL.
 func translateHostPath(p string) string {
-	if runtime.GOOS == "windows" {
-		return p
-	}
-	if m := wslUNCPathRe.FindStringSubmatch(p); m != nil {
-		return "/" + strings.ReplaceAll(m[1], `\`, "/")
-	}
-	if m := windowsDrivePathRe.FindStringSubmatch(p); m != nil {
-		rest := strings.ReplaceAll(m[2], `\`, "/")
-		return "/mnt/" + strings.ToLower(m[1]) + "/" + rest
-	}
-	return p
+	return shared.TranslateHostPath(p)
 }
 
 // expandPath cleans the path and expands a leading tilde (~) to the user's home directory.

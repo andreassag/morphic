@@ -98,6 +98,16 @@ func handleSystemInfo(c *gin.Context) {
 		}
 	}
 
+	exiftoolCandidates := shared.ExifToolCandidates()
+	exiftoolInfo := gin.H{
+		"installed": len(exiftoolCandidates) > 0,
+	}
+
+	sevenZipCandidates := shared.SevenZipCandidates()
+	sevenZipInfo := gin.H{
+		"installed": len(sevenZipCandidates) > 0,
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"version":  shared.Version,
 		"platform": runtime.GOOS,
@@ -105,6 +115,8 @@ func handleSystemInfo(c *gin.Context) {
 		"go":       runtime.Version(),
 		"cpus":     runtime.NumCPU(),
 		"ffmpeg":   ffmpegInfo,
+		"exiftool": exiftoolInfo,
+		"sevenzip": sevenZipInfo,
 	})
 }
 

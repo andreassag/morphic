@@ -10,16 +10,37 @@ import * as Trash from './trash.js';
 import * as History from './history.js';
 import * as Settings from './settings.js';
 
-// Export functions to global scope for HTML inline handlers
+// New Modules
+import * as Tagger from './tagger.js';
+import * as Inspector from './inspector.js';
+import * as Gallery from './gallery.js';
+import * as Trimmer from './trimmer.js';
+import * as Hasher from './hasher.js';
+import * as Archiver from './archiver.js';
+import * as Importer from './importer.js';
+import * as Resizer from './resizer.js';
+import * as Reporter from './reporter.js';
+import * as Syncer from './syncer.js';
+
+// ── Export Core UI functions to global scope for HTML handlers ────────
 window.switchTab = UI.switchTab;
 window.toggleCardCollapse = UI.toggleCardCollapse;
 window.openPreview = UI.openPreview;
 window.closePreview = UI.closePreview;
 
+// Compare Modal
 window.openCompareModal = Compare.openCompareModal;
 window.closeCompareModal = Compare.closeCompareModal;
 window.setCompareMode = Compare.setCompareMode;
+window.togglePlayVideos = Compare.togglePlayVideos;
+window.stepVideoFrame = Compare.stepVideoFrame;
+window.onScrubberInput = Compare.onScrubberInput;
+window.toggleVideoSync = Compare.toggleVideoSync;
+window.toggleVideoAudio = Compare.toggleVideoAudio;
+window.toggleVideoLoop = Compare.toggleVideoLoop;
 
+
+// Converter
 window.convScan = Converter.convScan;
 window.convSortResults = Converter.convSortResults;
 window.convToggleExtFilter = Converter.convToggleExtFilter;
@@ -31,6 +52,7 @@ window.convConvertBatch = Converter.convConvertBatch;
 window.convStopConvert = Converter.convStopConvert;
 window.convDeleteBatch = Converter.convDeleteBatch;
 
+// Dupfinder
 window.dupStartScan = Dupfinder.dupStartScan;
 window.dupCancelScan = Dupfinder.dupCancelScan;
 window.dupApplyRule = Dupfinder.dupApplyRule;
@@ -43,46 +65,161 @@ window.dupCloseModal = Dupfinder.dupCloseModal;
 window.dupExecuteDelete = Dupfinder.dupExecuteDelete;
 window.dupDeleteSingle = Dupfinder.dupDeleteSingle;
 
+// Organizer
 window.orgModeChanged = Organizer.orgModeChanged;
 window.orgStartPlan = Organizer.orgStartPlan;
 window.orgExecute = Organizer.orgExecute;
 window.orgCancelJob = Organizer.orgCancelJob;
 
+// Trash & History
 window.loadTrashHistory = Trash.loadTrashHistory;
 window.undoAuditAction = Trash.undoAuditAction;
 window.deleteTrashItem = Trash.deleteTrashItem;
 window.emptyAllTrash = Trash.emptyAllTrash;
 window.purgeExpiredTrash = Trash.purgeExpiredTrash;
-
 window.loadAuditHistory = History.loadAuditHistory;
 
+// Settings
 window.loadWatchFolders = Settings.loadWatchFolders;
 window.addWatchFolder = Settings.addWatchFolder;
 window.deleteWatchFolder = Settings.deleteWatchFolder;
 
-// Folder Browser Helpers
+// ── Export New Module functions to global scope ───────────────────────
+
+// Tagger
+window.taggerInitTab = Tagger.taggerInitTab;
+window.taggerScan = Tagger.taggerScan;
+window.taggerFilterResults = Tagger.taggerFilterResults;
+window.taggerToggleSelectAll = Tagger.taggerToggleSelectAll;
+window.taggerToggleSelectFile = Tagger.taggerToggleSelectFile;
+window.taggerDeselectAll = Tagger.taggerDeselectAll;
+window.taggerApplyBatch = Tagger.taggerApplyBatch;
+window.taggerConfirmStrip = Tagger.taggerConfirmStrip;
+window.taggerStripSingle = Tagger.taggerStripSingle;
+window.taggerEditSingle = Tagger.taggerEditSingle;
+
+// Inspector
+window.inspectorInitTab = Inspector.inspectorInitTab;
+window.inspectorAnalyze = Inspector.inspectorAnalyze;
+window.inspectorSetMode = Inspector.inspectorSetMode;
+window.inspectorSetColor = Inspector.inspectorSetColor;
+window.inspectorResetZoom = Inspector.inspectorResetZoom;
+window.inspectorJumpBreadcrumb = Inspector.inspectorJumpBreadcrumb;
+
+// Gallery & Lightbox
+window.galleryInitTab = Gallery.galleryInitTab;
+window.galleryLoad = Gallery.galleryLoad;
+window.gallerySetFilter = Gallery.gallerySetFilter;
+window.galleryFilterByName = Gallery.galleryFilterByName;
+window.gallerySetSort = Gallery.gallerySetSort;
+window.gallerySetGridSize = Gallery.gallerySetGridSize;
+window.openLightbox = Gallery.openLightbox;
+window.closeLightbox = Gallery.closeLightbox;
+window.nextLightboxItem = Gallery.nextLightboxItem;
+window.prevLightboxItem = Gallery.prevLightboxItem;
+window.lightboxZoom = Gallery.lightboxZoom;
+window.lightboxZoomReset = Gallery.lightboxZoomReset;
+
+// Trimmer
+window.trimmerInitTab = Trimmer.trimmerInitTab;
+window.trimmerLoad = Trimmer.trimmerLoad;
+window.trimmerRotate = Trimmer.trimmerRotate;
+window.trimmerFlipH = Trimmer.trimmerFlipH;
+window.trimmerFlipV = Trimmer.trimmerFlipV;
+window.trimmerSetAspect = Trimmer.trimmerSetAspect;
+window.trimmerUpdateTransforms = Trimmer.trimmerUpdateTransforms;
+window.trimmerOnResizeInput = Trimmer.trimmerOnResizeInput;
+window.trimmerSetStartCurrent = Trimmer.trimmerSetStartCurrent;
+window.trimmerSetEndCurrent = Trimmer.trimmerSetEndCurrent;
+window.trimmerUpdateVideoRange = Trimmer.trimmerUpdateVideoRange;
+window.trimmerExport = Trimmer.trimmerExport;
+
+// Hasher
+window.hasherInitTab = Hasher.hasherInitTab;
+window.hasherSwitchMode = Hasher.hasherSwitchMode;
+window.hasherStartGenerate = Hasher.hasherStartGenerate;
+window.hasherCancelJob = Hasher.hasherCancelJob;
+window.hasherCopyHash = Hasher.hasherCopyHash;
+window.hasherExportManifest = Hasher.hasherExportManifest;
+window.hasherStartVerify = Hasher.hasherStartVerify;
+
+// Archiver
+window.archiverInitTab = Archiver.archiverInitTab;
+window.archiverToggleSplit = Archiver.archiverToggleSplit;
+window.archiverSetSplitPreset = Archiver.archiverSetSplitPreset;
+window.archiverOnFormatChange = Archiver.archiverOnFormatChange;
+window.archiverCreate = Archiver.archiverCreate;
+window.archiverCancel = Archiver.archiverCancel;
+
+// Importer
+window.importerInitTab = Importer.importerInitTab;
+window.importerSetSource = Importer.importerSetSource;
+window.importerScanDevices = Importer.importerScanDevices;
+window.importerSelectDevice = Importer.importerSelectDevice;
+window.importerStart = Importer.importerStart;
+window.importerCancel = Importer.importerCancel;
+
+// Resizer
+window.resizerInitTab = Resizer.resizerInitTab;
+window.resizerTogglePreset = Resizer.resizerTogglePreset;
+window.resizerStart = Resizer.resizerStart;
+window.resizerCancel = Resizer.resizerCancel;
+
+// Reporter
+window.reporterInitTab = Reporter.reporterInitTab;
+window.reporterGenerate = Reporter.reporterGenerate;
+window.reporterDownloadHTML = Reporter.reporterDownloadHTML;
+window.reporterPrintPDF = Reporter.reporterPrintPDF;
+
+// Syncer
+window.syncerInitTab = Syncer.syncerInitTab;
+window.syncerPlan = Syncer.syncerPlan;
+window.syncerExecute = Syncer.syncerExecute;
+window.syncerCancel = Syncer.syncerCancel;
+
+// ── Folder Browser Helpers ─────────────────────────────────────────────
 //
 // The "Browse" button opens the browser's own native folder dialog (showDirectoryPicker), so the
 // client OS file explorer is used (Windows Explorer, Finder, ...) regardless of the OS Morphic runs
 // on. Browsers never reveal the real path of the picked folder, so the server locates it by name +
 // content among everything it can access (/api/browse/resolve). The in-page server browser is the
 // fallback for unsupported browsers or folders the server cannot see.
-const FOLDER_PREFIXES = ['converter', 'dupfinder', 'organizer', 'watch'];
 
-function getFolderDomIds(prefix) {
-    if (prefix === 'converter') return { inputId: 'convFolder', browserId: 'convBrowser' };
-    if (prefix === 'dupfinder') return { inputId: 'dupFolder', browserId: 'dupBrowser' };
-    if (prefix === 'organizer') return { inputId: 'orgFolder', browserId: 'orgBrowser' };
-    if (prefix === 'watch') return { inputId: 'watchNewPath', browserId: 'watchBrowser' };
-    return { inputId: `${prefix}Folder`, browserId: `${prefix}Browser` };
+const folderConfigMap = {
+    converter: { input: 'convFolder', browser: 'convBrowser' },
+    dupfinder: { input: 'dupFolder', browser: 'dupBrowser' },
+    organizer: { input: 'orgFolder', browser: 'orgBrowser' },
+    watch: { input: 'watchNewPath', browser: 'watchBrowser' },
+    tagger: { input: 'taggerFolder', browser: 'taggerBrowser' },
+    inspector: { input: 'inspectorFolder', browser: 'inspectorBrowser' },
+    gallery: { input: 'galleryFolder', browser: 'galleryBrowser' },
+    trimmer: { input: 'trimmerPath', browser: 'trimmerBrowser' },
+    hasher: { input: 'hasherFolder', browser: 'hasherBrowser' },
+    archiver: { input: 'archiverFolder', browser: 'archiverBrowser' },
+    importer: { input: 'importerFolder', browser: 'importerBrowser' },
+    resizer: { input: 'resizerFolder', browser: 'resizerBrowser' },
+    resizerOut: { input: 'resizerOutputFolder', browser: 'resizerOutputBrowser' },
+    reporter: { input: 'reporterFolder', browser: 'reporterBrowser' },
+    syncerSource: { input: 'syncerSourceFolder', browser: 'syncerSourceBrowser' },
+    syncerTarget: { input: 'syncerTargetFolder', browser: 'syncerTargetBrowser' }
+};
+
+function getFolderElements(prefix) {
+    const cfg = folderConfigMap[prefix] || { input: `${prefix}Folder`, browser: `${prefix}Browser` };
+    return {
+        input: document.getElementById(cfg.input),
+        browser: document.getElementById(cfg.browser),
+        inputId: cfg.input,
+        browserId: cfg.browser
+    };
 }
 
 function withTrailingSlash(p) {
     return p === '/' || p.endsWith('/') ? p : `${p}/`;
 }
 
-const currentBrowserPath = { converter: '', dupfinder: '', organizer: '', watch: '' };
-const showHiddenFolders = { converter: false, dupfinder: false, organizer: false, watch: false };
+const currentBrowserPath = {};
+const showHiddenFolders = {};
 const browseDebounceTimers = {};
 const browseRequestSeq = {};
 
@@ -113,8 +250,7 @@ async function resolveFolderOnServer(name, children, hint) {
 }
 
 function setFolderValue(prefix, path) {
-    const { inputId } = getFolderDomIds(prefix);
-    const input = document.getElementById(inputId);
+    const { input } = getFolderElements(prefix);
     if (input) input.value = withTrailingSlash(path);
     window.closeBrowser(prefix);
     UI.showToast(`Selected: ${withTrailingSlash(path)}`, 'info');
@@ -122,8 +258,7 @@ function setFolderValue(prefix, path) {
 
 // Shows several possible server paths for a picked folder so the user can confirm the right one.
 function showResolveCandidates(prefix, name, candidates) {
-    const { browserId } = getFolderDomIds(prefix);
-    const browser = document.getElementById(browserId);
+    const { browser } = getFolderElements(prefix);
     if (!browser) return;
     browser.style.display = 'block';
 
@@ -163,8 +298,7 @@ async function tryServerNativeDialog(prefix) {
 }
 
 window.openNativeFolderExplorer = async function(prefix) {
-    const { inputId } = getFolderDomIds(prefix);
-    const input = document.getElementById(inputId);
+    const { input } = getFolderElements(prefix);
 
     // 1. Browser-native folder dialog (client OS file explorer)
     if (typeof window.showDirectoryPicker === 'function') {
@@ -212,8 +346,7 @@ window.openNativeFolderExplorer = async function(prefix) {
 };
 
 window.toggleBrowser = async function(prefix) {
-    const { browserId } = getFolderDomIds(prefix);
-    const browser = document.getElementById(browserId);
+    const { browser } = getFolderElements(prefix);
     if (!browser) return;
     if (browser.style.display === 'block') {
         window.closeBrowser(prefix);
@@ -223,19 +356,16 @@ window.toggleBrowser = async function(prefix) {
 };
 
 window.openBrowser = async function(prefix, overridePath = null) {
-    const { inputId, browserId } = getFolderDomIds(prefix);
-    const browser = document.getElementById(browserId);
+    const { input, browser } = getFolderElements(prefix);
     if (!browser) return;
     browser.style.display = 'block';
 
-    const input = document.getElementById(inputId);
     const initialPath = overridePath !== null ? overridePath : (input?.value.trim() || currentBrowserPath[prefix] || '');
     await window.loadBrowserPath(prefix, initialPath, true);
 };
 
 window.closeBrowser = function(prefix) {
-    const { browserId } = getFolderDomIds(prefix);
-    const browser = document.getElementById(browserId);
+    const { browser } = getFolderElements(prefix);
     if (browser) browser.style.display = 'none';
 };
 
@@ -292,8 +422,7 @@ function renderBrowserRoots(prefix, browser, data) {
 }
 
 window.loadBrowserPath = async function(prefix, path, explicitOpen = false) {
-    const { inputId, browserId } = getFolderDomIds(prefix);
-    const browser = document.getElementById(browserId);
+    const { input, browser } = getFolderElements(prefix);
     if (!browser) return;
 
     const seq = (browseRequestSeq[prefix] = (browseRequestSeq[prefix] || 0) + 1);
@@ -325,9 +454,8 @@ window.loadBrowserPath = async function(prefix, path, explicitOpen = false) {
 
         // A pasted Windows path (D:\Photos, \\wsl$\...) was translated by the server: show the real path
         const winLike = /^([A-Za-z]:[\\/]|[\\/]{2}wsl)/i;
-        const inputEl = document.getElementById(inputId);
-        if (inputEl && data.exists !== false && winLike.test(path) && !/^[A-Za-z]:[\\/]/.test(data.current)) {
-            inputEl.value = withTrailingSlash(data.current);
+        if (input && data.exists !== false && winLike.test(path) && !/^[A-Za-z]:[\\/]/.test(data.current)) {
+            input.value = withTrailingSlash(data.current);
         }
 
         const pathHeader = browser.querySelector('.fb-path');
@@ -370,8 +498,7 @@ window.loadBrowserPath = async function(prefix, path, explicitOpen = false) {
 };
 
 window.selectEntryPath = function(prefix, path) {
-    const { inputId } = getFolderDomIds(prefix);
-    const input = document.getElementById(inputId);
+    const { input } = getFolderElements(prefix);
     // "/" is only for navigating; it is not a valid scan/watch target
     if (input && path !== '/') {
         input.value = withTrailingSlash(path);
@@ -380,8 +507,7 @@ window.selectEntryPath = function(prefix, path) {
 };
 
 window.selectBrowserFolder = function(prefix) {
-    const { inputId } = getFolderDomIds(prefix);
-    const input = document.getElementById(inputId);
+    const { input } = getFolderElements(prefix);
     const p = currentBrowserPath[prefix];
     if (input && p) {
         if (p === '/') {
@@ -395,10 +521,10 @@ window.selectBrowserFolder = function(prefix) {
 };
 
 function initFolderInputEvents() {
-    FOLDER_PREFIXES.forEach(prefix => {
-        const { inputId, browserId } = getFolderDomIds(prefix);
-        const input = document.getElementById(inputId);
-        const browser = document.getElementById(browserId);
+    const prefixes = Object.keys(folderConfigMap);
+
+    prefixes.forEach(prefix => {
+        const { input, browser } = getFolderElements(prefix);
         if (!input || !browser) return;
 
         input.addEventListener('focus', () => {
@@ -427,10 +553,8 @@ function initFolderInputEvents() {
     });
 
     document.addEventListener('click', (e) => {
-        FOLDER_PREFIXES.forEach(prefix => {
-            const { inputId, browserId } = getFolderDomIds(prefix);
-            const input = document.getElementById(inputId);
-            const browser = document.getElementById(browserId);
+        prefixes.forEach(prefix => {
+            const { input, browser } = getFolderElements(prefix);
             if (!browser || browser.style.display !== 'block') return;
             // Ignore clicks inside the browser or on the input/Browse button row. Re-rendered
             // entries are detached from the DOM by the time this runs, so also check isConnected.
@@ -442,15 +566,29 @@ function initFolderInputEvents() {
     });
 }
 
-// Initialize Modules on DOMContentLoaded
+// ── Initialize App & Modules on DOMContentLoaded ───────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     UI.restoreCollapsedState();
+    UI.initGroupedNavigation();
     Events.initEventSource();
     initFolderInputEvents();
+
     Converter.initConverter();
     Dupfinder.initDupfinder();
     Organizer.initOrganizer();
     Trash.initTrash();
     History.initHistory();
     Settings.initSettings();
+
+    // Init new modules
+    Tagger.initTagger();
+    Inspector.initInspector();
+    Gallery.initGallery();
+    Trimmer.initTrimmer();
+    Hasher.initHasher();
+    Archiver.initArchiver();
+    Importer.initImporter();
+    Resizer.initResizer();
+    Reporter.initReporter();
+    Syncer.initSyncer();
 });

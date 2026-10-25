@@ -16,9 +16,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/bin/morphic ./cmd
 # Stage 2: Runtime environment
 FROM alpine:3.24
 
-# Install ffmpeg, ca-certificates, and hardware acceleration libraries
+# Install ffmpeg, exiftool, 7zip, ca-certificates, and hardware acceleration libraries
 RUN apk add --no-cache \
     ffmpeg \
+    exiftool \
+    7zip \
     ca-certificates \
     tzdata \
     libva \

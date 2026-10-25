@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -86,6 +87,29 @@ func IsProtectedSystemPath(cleanAbsPath string) bool {
 	return false
 }
 
+var (
+	// windowsDrivePathRe matches host paths such as D:\Photos or d:/Photos.
+	windowsDrivePathRe = regexp.MustCompile(`^([A-Za-z]):(?:[\\/](.*))?$`)
+	// wslUNCPathRe matches \\wsl$\Distro\home\x and \\wsl.localhost\Distro\home\x.
+	wslUNCPathRe = regexp.MustCompile(`(?i)^[\\/]{2}wsl(?:\$|\.localhost)[\\/][^\\/]+(?:[\\/](.*))?$`)
+)
+
+// TranslateHostPath converts paths copied from a Windows file explorer (e.g. D:\Photos or
+// \\wsl$\Ubuntu\home\me) into their equivalent on a Linux/macOS runner (/mnt/d/Photos, /home/me).
+func TranslateHostPath(p string) string {
+	if runtime.GOOS == "windows" {
+		return p
+	}
+	if m := wslUNCPathRe.FindStringSubmatch(p); m != nil {
+		return "/" + strings.ReplaceAll(m[1], `\`, "/")
+	}
+	if m := windowsDrivePathRe.FindStringSubmatch(p); m != nil {
+		rest := strings.ReplaceAll(m[2], `\`, "/")
+		return "/mnt/" + strings.ToLower(m[1]) + "/" + rest
+	}
+	return p
+}
+
 // ValidateSafePath cleans and canonicalizes a path, rejecting null bytes, relative traversal,
 // and protected system directories.
 func ValidateSafePath(raw string) (string, error) {
@@ -96,6 +120,8 @@ func ValidateSafePath(raw string) (string, error) {
 	if strings.Contains(raw, "\x00") {
 		return "", ErrNullByte
 	}
+
+	raw = TranslateHostPath(raw)
 
 	// Expand leading tilde
 	if raw == "~" || strings.HasPrefix(raw, "~/") || strings.HasPrefix(raw, `~\`) {

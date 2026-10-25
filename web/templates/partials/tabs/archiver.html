@@ -1,0 +1,126 @@
+{{ define "archiver_tab" }}
+<div class="tab-content" id="tab-archiver">
+<div class="container">
+
+    <!-- Config Card (Collapsible) -->
+    <div class="card collapsible-card" id="archiverConfigCard">
+        <div class="card-header" onclick="toggleCardCollapse('archiverConfigCard')">
+            <div class="card-title"><span class="icon">📦</span> Batch Archiver &amp; Compression</div>
+            <button class="collapse-toggle" type="button" aria-label="Toggle section"><span class="chevron">▼</span></button>
+        </div>
+
+        <div class="card-body">
+            <!-- Source Folder -->
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="archiverFolder">Source Directory to Archive</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="archiverFolder" placeholder="Enter folder to archive (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('archiver')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="archiverBrowser">
+                        <div class="fb-header">
+                            <span class="fb-path">~</span>
+                            <button class="btn btn-ghost btn-sm" onclick="closeBrowser('archiver')">✕</button>
+                        </div>
+                        <div class="fb-item fb-parent" style="display:none"><span class="icon">⬆️</span> ..</div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer">
+                            <button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('archiver')">✓ Use this folder</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Destination File -->
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="archiverOutputPath">Output Archive File Path</label>
+                    <input type="text" id="archiverOutputPath" placeholder="e.g. /media/backups/photos_archive.zip" />
+                </div>
+            </div>
+
+            <!-- Archive Format & Compression Level -->
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group narrow">
+                    <label for="archiverFormat">Archive Format</label>
+                    <select id="archiverFormat" onchange="archiverOnFormatChange(this.value)">
+                        <option value="zip">.ZIP (Cross-Platform Standard)</option>
+                        <option value="tar.gz">.TAR.GZ (Unix / High Efficiency)</option>
+                        <option value="7z">.7Z (Maximum Compression Ratio)</option>
+                    </select>
+                </div>
+                <div class="form-group narrow">
+                    <label for="archiverLevel">Compression Level</label>
+                    <select id="archiverLevel">
+                        <option value="normal" selected>Normal (Balanced Speed/Size)</option>
+                        <option value="store">Store (No compression, fastest)</option>
+                        <option value="fast">Fast (Lower CPU usage)</option>
+                        <option value="best">Best (Maximum compression)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Multi-Part Volume Splitting -->
+            <div class="form-row" style="margin-bottom:14px; align-items:flex-start;">
+                <div class="form-group">
+                    <label class="checkbox-label" for="archiverSplitToggle">
+                        <input type="checkbox" id="archiverSplitToggle" onchange="archiverToggleSplit(this.checked)" />
+                        Split archive into multi-part volumes (e.g. .part01, .part02)
+                    </label>
+                    <div id="archiverSplitOptions" style="display:none; margin-top:8px; display:none; gap:12px; align-items:center;">
+                        <span style="font-size:12px; color:var(--text-dim);">Volume Size Preset:</span>
+                        <div class="btn-group">
+                            <button class="btn btn-sm" onclick="archiverSetSplitPreset(25)">25 MB</button>
+                            <button class="btn btn-sm" onclick="archiverSetSplitPreset(100)">100 MB</button>
+                            <button class="btn btn-sm" onclick="archiverSetSplitPreset(700)">700 MB</button>
+                            <button class="btn btn-sm" onclick="archiverSetSplitPreset(4700)">4.7 GB</button>
+                        </div>
+                        <input type="number" id="archiverSplitSize" placeholder="Custom MB" style="width:110px; padding:4px 8px; font-size:12px;" />
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row" style="justify-content: flex-end;">
+                <button class="btn btn-primary" id="archiverStartBtn" onclick="archiverCreate()">
+                    <span class="icon">📦</span> Create Archive
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Indicator -->
+    <div class="card progress-compact" id="archiverProgressCard" style="display:none;">
+        <div class="progress-compact-row">
+            <span class="spinner"></span>
+            <span class="progress-compact-msg" id="archiverProgressMsg">Archiving files…</span>
+            <div class="progress-bar-track compact">
+                <div class="progress-bar-fill" id="archiverProgressFill" style="width: 0%;"></div>
+            </div>
+            <span class="progress-compact-pct" id="archiverProgressPct">0%</span>
+            <button class="btn btn-stop btn-sm" onclick="archiverCancel()">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Archive Result Summary Card -->
+    <div class="card" id="archiverSummaryCard" style="display:none;">
+        <div class="card-title"><span class="icon">🎉</span> Archive Created Successfully</div>
+        <div class="kpi-grid">
+            <div class="kpi-card accent">
+                <span class="kpi-label">Archive File</span>
+                <span class="mono-text" id="archiverResultPath">-</span>
+            </div>
+            <div class="kpi-card success">
+                <span class="kpi-label">Compressed Size</span>
+                <span class="kpi-value" id="archiverResultSize">0 MB</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-label">Files Bundled</span>
+                <span class="kpi-value" id="archiverResultCount">0</span>
+            </div>
+        </div>
+    </div>
+
+</div>
+</div>
+{{ end }}

@@ -3,6 +3,7 @@ module github.com/andreassag/morphic
 go 1.26.0
 
 require (
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/corona10/goimagehash v1.1.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/dsoprea/go-exif/v3 v3.0.1

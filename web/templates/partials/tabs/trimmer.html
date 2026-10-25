@@ -1,0 +1,147 @@
+{{ define "trimmer_tab" }}
+<div class="tab-content" id="tab-trimmer">
+<div class="container">
+
+    <!-- Source Selection Card -->
+    <div class="card">
+        <div class="card-title"><span class="icon">✂️</span> Trimmer &amp; Media Editor</div>
+        <div class="form-row" style="margin-bottom:14px;">
+            <div class="form-group">
+                <label for="trimmerPath">Media File Path</label>
+                <div class="folder-input-row">
+                    <input type="text" id="trimmerPath" placeholder="Enter path to image or video (e.g. /media/photos/sample.jpg)…" autocomplete="off" />
+                    <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('trimmer')" title="Open OS file dialog">📁 Select</button>
+                </div>
+                <div class="folder-browser" id="trimmerBrowser">
+                    <div class="fb-header">
+                        <span class="fb-path">~</span>
+                        <button class="btn btn-ghost btn-sm" onclick="closeBrowser('trimmer')">✕</button>
+                    </div>
+                    <div class="fb-item fb-parent" style="display:none"><span class="icon">⬆️</span> ..</div>
+                    <div class="fb-entries"></div>
+                    <div class="fb-footer">
+                        <button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('trimmer')">✓ Select</button>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group narrow" style="align-self:flex-end;">
+                <button class="btn btn-primary" id="trimmerLoadBtn" onclick="trimmerLoad()">
+                    <span class="icon">📥</span> Load Media
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Workspace (Image / Video) -->
+    <div id="trimmerWorkspace" style="display:none;">
+
+        <!-- Before / After Visualizer Viewport -->
+        <div class="trimmer-split-view">
+            <div class="trimmer-viewport">
+                <span class="trimmer-viewport-label">Original</span>
+                <div id="trimmerOriginalContainer" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;">
+                    <!-- Original media inserted dynamically -->
+                </div>
+            </div>
+
+            <div class="trimmer-viewport">
+                <span class="trimmer-viewport-label">Transformed Preview</span>
+                <div id="trimmerTransformedContainer" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;">
+                    <canvas id="trimmerPreviewCanvas" style="display:none;"></canvas>
+                    <video id="trimmerPreviewVideo" controls style="display:none; max-width:100%; max-height:420px;"></video>
+                </div>
+            </div>
+        </div>
+
+        <!-- Image Controls -->
+        <div class="card" id="trimmerImageControls">
+            <div class="card-title"><span class="icon">🖼️</span> Image Editing Tools</div>
+            <div class="trimmer-controls-panel">
+                <!-- Crop & Aspect -->
+                <div class="form-group">
+                    <label>Aspect Ratio Presets</label>
+                    <div class="btn-group" style="flex-wrap:wrap;">
+                        <button class="btn btn-sm active" onclick="trimmerSetAspect('free')">Free</button>
+                        <button class="btn btn-sm" onclick="trimmerSetAspect('1:1')">1:1</button>
+                        <button class="btn btn-sm" onclick="trimmerSetAspect('4:3')">4:3</button>
+                        <button class="btn btn-sm" onclick="trimmerSetAspect('16:9')">16:9</button>
+                        <button class="btn btn-sm" onclick="trimmerSetAspect('9:16')">9:16</button>
+                    </div>
+                    <div style="display:flex; gap:8px; margin-top:8px;">
+                        <input type="number" id="trimCropW" placeholder="Width px" onchange="trimmerUpdateTransforms()" style="padding:4px 8px; font-size:12px;" />
+                        <input type="number" id="trimCropH" placeholder="Height px" onchange="trimmerUpdateTransforms()" style="padding:4px 8px; font-size:12px;" />
+                    </div>
+                </div>
+
+                <!-- Rotate & Flip -->
+                <div class="form-group">
+                    <label>Orientation &amp; Flip</label>
+                    <div style="display:flex; gap:8px;">
+                        <button class="btn btn-ghost btn-sm" onclick="trimmerRotate(-90)" title="Rotate 90° CCW">↺ 90°</button>
+                        <button class="btn btn-ghost btn-sm" onclick="trimmerRotate(90)" title="Rotate 90° CW">↻ 90°</button>
+                        <button class="btn btn-ghost btn-sm" onclick="trimmerFlipH()" title="Flip horizontally">⇄ Flip H</button>
+                        <button class="btn btn-ghost btn-sm" onclick="trimmerFlipV()" title="Flip vertically">⇅ Flip V</button>
+                    </div>
+                </div>
+
+                <!-- Resize -->
+                <div class="form-group">
+                    <label>Scale / Resize</label>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <input type="number" id="trimResizeW" placeholder="Target W" oninput="trimmerOnResizeInput('w')" style="padding:4px 8px; font-size:12px;" />
+                        <span style="color:var(--text-dim);">✕</span>
+                        <input type="number" id="trimResizeH" placeholder="Target H" oninput="trimmerOnResizeInput('h')" style="padding:4px 8px; font-size:12px;" />
+                        <label class="checkbox-label" style="font-size:11px;">
+                            <input type="checkbox" id="trimLockAspect" checked /> Lock Ratio
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Video Controls -->
+        <div class="card" id="trimmerVideoControls" style="display:none;">
+            <div class="card-title"><span class="icon">🎬</span> Video Clip Trimming</div>
+            <div class="form-row" style="margin-bottom:12px;">
+                <div class="form-group">
+                    <label for="trimVideoStart">Start Time (seconds or HH:MM:SS)</label>
+                    <input type="text" id="trimVideoStart" value="0.0" oninput="trimmerUpdateVideoRange()" />
+                </div>
+                <div class="form-group">
+                    <label for="trimVideoEnd">End Time (seconds or HH:MM:SS)</label>
+                    <input type="text" id="trimVideoEnd" value="10.0" oninput="trimmerUpdateVideoRange()" />
+                </div>
+                <div class="form-group narrow" style="align-self:flex-end;">
+                    <button class="btn btn-ghost btn-sm" onclick="trimmerSetStartCurrent()">[ Set Start at Playhead</button>
+                    <button class="btn btn-ghost btn-sm" onclick="trimmerSetEndCurrent()">] Set End at Playhead</button>
+                </div>
+            </div>
+            <div class="form-row">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="trimStreamCopy" checked />
+                    Stream copy mode (-c copy, instant export without re-encoding)
+                </label>
+            </div>
+        </div>
+
+        <!-- Export Card -->
+        <div class="card">
+            <div class="card-title"><span class="icon">💾</span> Export Transformed Media</div>
+            <div class="form-row" style="margin-bottom:12px;">
+                <div class="form-group">
+                    <label for="trimmerOutputPath">Output Destination Path</label>
+                    <input type="text" id="trimmerOutputPath" placeholder="e.g. /media/photos/sample_trimmed.jpg" />
+                </div>
+            </div>
+            <div class="form-row" style="justify-content: flex-end;">
+                <button class="btn btn-success" id="trimmerExportBtn" onclick="trimmerExport()">
+                    <span class="icon">🚀</span> Export as New File
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+</div>
+{{ end }}

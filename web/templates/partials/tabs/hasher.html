@@ -1,0 +1,176 @@
+{{ define "hasher_tab" }}
+<div class="tab-content" id="tab-hasher">
+<div class="container">
+
+    <!-- Mode Selector Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+        <div class="btn-group">
+            <button class="btn active" id="btnHasherModeGen" onclick="hasherSwitchMode('generate')">
+                <span class="icon">⚡</span> Generate Checksums
+            </button>
+            <button class="btn" id="btnHasherModeVerify" onclick="hasherSwitchMode('verify')">
+                <span class="icon">🛡️</span> Verify Integrity (Bit-Rot)
+            </button>
+        </div>
+    </div>
+
+    <!-- 1. Generate Section -->
+    <div id="hasherSectionGenerate">
+        <div class="card collapsible-card" id="hasherGenCard">
+            <div class="card-header" onclick="toggleCardCollapse('hasherGenCard')">
+                <div class="card-title"><span class="icon">🔐</span> Hash Generation Configuration</div>
+                <button class="collapse-toggle" type="button" aria-label="Toggle section"><span class="chevron">▼</span></button>
+            </div>
+            <div class="card-body">
+                <div class="form-row" style="margin-bottom:14px;">
+                    <div class="form-group">
+                        <label for="hasherFolder">Source Directory</label>
+                        <div class="folder-input-row">
+                            <input type="text" id="hasherFolder" placeholder="Enter absolute folder path (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
+                            <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('hasher')" title="Open OS file dialog">📁 Browse</button>
+                        </div>
+                        <div class="folder-browser" id="hasherBrowser">
+                            <div class="fb-header">
+                                <span class="fb-path">~</span>
+                                <button class="btn btn-ghost btn-sm" onclick="closeBrowser('hasher')">✕</button>
+                            </div>
+                            <div class="fb-item fb-parent" style="display:none"><span class="icon">⬆️</span> ..</div>
+                            <div class="fb-entries"></div>
+                            <div class="fb-footer">
+                                <button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('hasher')">✓ Use this folder</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-row" style="margin-bottom:14px; align-items:center;">
+                    <div class="form-group narrow">
+                        <label for="hasherAlgorithm">Hash Algorithm</label>
+                        <select id="hasherAlgorithm">
+                            <option value="sha256">SHA-256 (Cryptographic / Bit-rot)</option>
+                            <option value="md5">MD5 (Legacy Compatibility)</option>
+                            <option value="xxhash64">xxHash64 (High-Throughput / Fast)</option>
+                            <option value="all">All Checksums (SHA-256 + MD5 + xxHash)</option>
+                        </select>
+                    </div>
+                    <div class="form-group narrow">
+                        <label class="checkbox-label" for="hasherRecursive">
+                            <input type="checkbox" id="hasherRecursive" checked />
+                            Recursive subdirectories
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-row" style="justify-content: flex-end;">
+                    <button class="btn btn-primary" id="hasherStartBtn" onclick="hasherStartGenerate()">
+                        <span class="icon">⚡</span> Compute Checksums
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Indicator -->
+        <div class="card progress-compact" id="hasherProgressCard" style="display:none;">
+            <div class="progress-compact-row">
+                <span class="spinner" id="hasherSpinner"></span>
+                <span class="progress-compact-msg" id="hasherProgressMsg">Computing checksums…</span>
+                <div class="progress-bar-track compact">
+                    <div class="progress-bar-fill" id="hasherProgressFill" style="width: 0%;"></div>
+                </div>
+                <span class="progress-compact-pct" id="hasherProgressPct">0%</span>
+                <button class="btn btn-stop btn-sm" onclick="hasherCancelJob()">Stop</button>
+            </div>
+        </div>
+
+        <!-- Results Card -->
+        <div class="card" id="hasherResultsCard" style="display:none;">
+            <div class="card-header-flex">
+                <div class="card-title">
+                    <span class="icon">📋</span> Checksum Results (<span id="hasherResultCount">0</span> files)
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-ghost btn-sm" onclick="hasherExportManifest('sha256')">Export .sha256</button>
+                    <button class="btn btn-ghost btn-sm" onclick="hasherExportManifest('md5')">Export .md5</button>
+                    <button class="btn btn-ghost btn-sm" onclick="hasherExportManifest('json')">Export JSON</button>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="data-table" id="hasherTable">
+                    <thead>
+                        <tr>
+                            <th>File Relative Path</th>
+                            <th>Size</th>
+                            <th>Checksum</th>
+                            <th style="text-align:right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="hasherTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Verify Section -->
+    <div id="hasherSectionVerify" style="display:none;">
+        <div class="card">
+            <div class="card-title"><span class="icon">🛡️</span> Verify Files Against Manifest</div>
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="hasherVerifyFolder">Directory to Verify</label>
+                    <input type="text" id="hasherVerifyFolder" placeholder="Enter folder to verify…" value="{{ .initial_folder }}" />
+                </div>
+                <div class="form-group">
+                    <label for="hasherManifestPath">Manifest File Path (.sha256, .md5, .json)</label>
+                    <input type="text" id="hasherManifestPath" placeholder="Path to manifest file (e.g. /media/manifest.sha256)…" />
+                </div>
+            </div>
+            <div class="form-row" style="justify-content: flex-end;">
+                <button class="btn btn-primary" id="hasherVerifyBtn" onclick="hasherStartVerify()">
+                    <span class="icon">🔍</span> Run Verification
+                </button>
+            </div>
+        </div>
+
+        <!-- Verification Metrics Summary -->
+        <div class="kpi-grid" id="hasherVerifyKpis" style="display:none;">
+            <div class="kpi-card success">
+                <span class="kpi-label">Verified OK</span>
+                <span class="kpi-value" id="hasherKpiOk">0</span>
+            </div>
+            <div class="kpi-card danger">
+                <span class="kpi-label">Corrupted / Mismatch</span>
+                <span class="kpi-value" id="hasherKpiCorrupt">0</span>
+            </div>
+            <div class="kpi-card warning">
+                <span class="kpi-label">Missing Files</span>
+                <span class="kpi-value" id="hasherKpiMissing">0</span>
+            </div>
+            <div class="kpi-card accent">
+                <span class="kpi-label">New / Untracked</span>
+                <span class="kpi-value" id="hasherKpiNew">0</span>
+            </div>
+        </div>
+
+        <!-- Verification Results Table -->
+        <div class="card" id="hasherVerifyResultsCard" style="display:none;">
+            <div class="card-title"><span class="icon">📋</span> Verification Details</div>
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>File Path</th>
+                            <th>Expected Checksum</th>
+                            <th>Current Checksum</th>
+                        </tr>
+                    </thead>
+                    <tbody id="hasherVerifyTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</div>
+</div>
+{{ end }}

@@ -1,0 +1,91 @@
+{{ define "gallery_tab" }}
+<div class="tab-content" id="tab-gallery">
+<div class="container">
+
+    <!-- Folder Config Card (Collapsible) -->
+    <div class="card collapsible-card" id="galleryConfigCard">
+        <div class="card-header" onclick="toggleCardCollapse('galleryConfigCard')">
+            <div class="card-title"><span class="icon">🖼️</span> Media Gallery Browser</div>
+            <button class="collapse-toggle" type="button" aria-label="Toggle section">
+                <span class="chevron">▼</span>
+            </button>
+        </div>
+
+        <div class="card-body">
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="galleryFolder">Media Directory</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="galleryFolder" placeholder="Enter absolute folder path (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('gallery')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="galleryBrowser">
+                        <div class="fb-header">
+                            <span class="fb-path">~</span>
+                            <button class="btn btn-ghost btn-sm" onclick="closeBrowser('gallery')">✕</button>
+                        </div>
+                        <div class="fb-item fb-parent" style="display:none">
+                            <span class="icon">⬆️</span> ..
+                        </div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer">
+                            <button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('gallery')">✓ Use this folder</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row" style="justify-content: flex-end;">
+                <button class="btn btn-primary" id="galleryLoadBtn" onclick="galleryLoad()">
+                    <span class="icon">📂</span> Open Gallery
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gallery Toolbar -->
+    <div class="gallery-toolbar" id="galleryToolbar" style="display:none;">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <div class="btn-group">
+                <button class="btn btn-sm active" id="btnFilterAll" onclick="gallerySetFilter('all')">All</button>
+                <button class="btn btn-sm" id="btnFilterImages" onclick="gallerySetFilter('images')">Images</button>
+                <button class="btn btn-sm" id="btnFilterVideos" onclick="gallerySetFilter('videos')">Videos</button>
+            </div>
+
+            <input type="text" id="gallerySearch" placeholder="Filter by name…" oninput="galleryFilterByName(this.value)" style="width:180px; padding:6px 10px; font-size:13px;" />
+        </div>
+
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:6px;">
+                <label for="gallerySortSelect" style="font-size:12px; margin:0;">Sort:</label>
+                <select id="gallerySortSelect" onchange="gallerySetSort(this.value)" style="width:140px; padding:5px 8px; font-size:12px;">
+                    <option value="date-desc">Newest First</option>
+                    <option value="date-asc">Oldest First</option>
+                    <option value="size-desc">Largest First</option>
+                    <option value="size-asc">Smallest First</option>
+                    <option value="name-asc">Name A-Z</option>
+                </select>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-sm" onclick="gallerySetGridSize('compact')" title="Compact thumbnails">S</button>
+                <button class="btn btn-sm active" onclick="gallerySetGridSize('normal')" title="Normal thumbnails">M</button>
+                <button class="btn btn-sm" onclick="gallerySetGridSize('large')" title="Large thumbnails">L</button>
+            </div>
+
+            <span class="badge badge-info" id="galleryItemCount">0 items</span>
+        </div>
+    </div>
+
+    <!-- Gallery Grid -->
+    <div class="gallery-grid" id="galleryGrid"></div>
+
+    <!-- Loading / Empty State -->
+    <div id="galleryEmptyState" style="display:none; text-align:center; padding:48px 20px; color:var(--text-dim);">
+        <span style="font-size:36px; display:block; margin-bottom:12px;">📷</span>
+        <p>No media files found in this folder</p>
+    </div>
+
+</div>
+</div>
+{{ end }}

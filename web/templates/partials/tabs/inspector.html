@@ -1,0 +1,158 @@
+{{ define "inspector_tab" }}
+<div class="tab-content" id="tab-inspector">
+<div class="container">
+
+    <!-- Config Card (Collapsible) -->
+    <div class="card collapsible-card" id="inspectorConfigCard">
+        <div class="card-header" onclick="toggleCardCollapse('inspectorConfigCard')">
+            <div class="card-title"><span class="icon">📈</span> Storage Inspector &amp; Analytics</div>
+            <button class="collapse-toggle" type="button" aria-label="Toggle section">
+                <span class="chevron">▼</span>
+            </button>
+        </div>
+
+        <div class="card-body">
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label for="inspectorFolder">Target Directory</label>
+                    <div class="folder-input-row">
+                        <input type="text" id="inspectorFolder" placeholder="Enter absolute folder path (e.g. /media)…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('inspector')" title="Open OS file dialog">📁 Browse</button>
+                    </div>
+                    <div class="folder-browser" id="inspectorBrowser">
+                        <div class="fb-header">
+                            <span class="fb-path">~</span>
+                            <button class="btn btn-ghost btn-sm" onclick="closeBrowser('inspector')">✕</button>
+                        </div>
+                        <div class="fb-item fb-parent" style="display:none">
+                            <span class="icon">⬆️</span> ..
+                        </div>
+                        <div class="fb-entries"></div>
+                        <div class="fb-footer">
+                            <button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('inspector')">✓ Use this folder</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row" style="justify-content: flex-end;">
+                <button class="btn btn-primary" id="inspectorAnalyzeBtn" onclick="inspectorAnalyze()">
+                    <span class="icon">📊</span> Analyze Storage
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Indicator -->
+    <div class="card progress-compact" id="inspectorProgressCard" style="display:none;">
+        <div class="progress-compact-row">
+            <span class="spinner"></span>
+            <span class="progress-compact-msg" id="inspectorProgressMsg">Analyzing folder tree…</span>
+            <div class="progress-bar-track compact">
+                <div class="progress-bar-fill indeterminate"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- KPI Summary Row -->
+    <div class="kpi-grid" id="inspectorKpis" style="display:none;">
+        <div class="kpi-card accent">
+            <span class="kpi-label">Total Storage</span>
+            <span class="kpi-value" id="inspectorTotalSize">0 GB</span>
+        </div>
+        <div class="kpi-card">
+            <span class="kpi-label">Total Files</span>
+            <span class="kpi-value" id="inspectorTotalFiles">0</span>
+        </div>
+        <div class="kpi-card success">
+            <span class="kpi-label">Images</span>
+            <span class="kpi-value" id="inspectorImagesSize">0 GB</span>
+            <span class="mono-text" id="inspectorImagesCount">0 files</span>
+        </div>
+        <div class="kpi-card warning">
+            <span class="kpi-label">Videos</span>
+            <span class="kpi-value" id="inspectorVideosSize">0 GB</span>
+            <span class="mono-text" id="inspectorVideosCount">0 files</span>
+        </div>
+    </div>
+
+    <!-- Visualization Card -->
+    <div class="viz-card" id="inspectorVizCard" style="display:none;">
+        <div class="viz-toolbar">
+            <div class="btn-group">
+                <button class="btn btn-sm active" id="btnVizTreemap" onclick="inspectorSetMode('treemap')">Treemap</button>
+                <button class="btn btn-sm" id="btnVizSunburst" onclick="inspectorSetMode('sunburst')">Sunburst</button>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:8px;">
+                <label for="inspectorColorSelect" style="font-size:12px; margin:0;">Color by:</label>
+                <select id="inspectorColorSelect" onchange="inspectorSetColor(this.value)" style="width:130px; padding:4px 8px; font-size:12px;">
+                    <option value="type">File Type</option>
+                    <option value="size">File Size</option>
+                    <option value="age">File Age</option>
+                </select>
+                <button class="btn btn-ghost btn-sm" onclick="inspectorResetZoom()" title="Reset zoom to root">⟲ Reset Zoom</button>
+            </div>
+        </div>
+
+        <div class="viz-breadcrumbs" id="inspectorBreadcrumbs">
+            <span class="viz-crumb current">Root</span>
+        </div>
+
+        <div class="viz-container" id="inspectorVizContainer" style="margin-top:12px;">
+            <canvas id="inspectorCanvas"></canvas>
+            <div class="viz-tooltip" id="inspectorTooltip"></div>
+        </div>
+
+        <!-- Format breakdown bar -->
+        <div style="margin-top:16px;">
+            <div style="font-size:12px; font-weight:600; color:var(--text-dim); margin-bottom:4px;">Format Distribution</div>
+            <div class="format-bar" id="inspectorFormatBar"></div>
+            <div class="format-legend" id="inspectorFormatLegend"></div>
+        </div>
+    </div>
+
+    <!-- Detailed Highlights (Largest & Oldest) -->
+    <div class="form-row" id="inspectorDetailRow" style="display:none;">
+        <!-- Largest Files Card -->
+        <div class="card" style="flex:1; min-width:320px;">
+            <div class="card-title"><span class="icon">🐘</span> Largest Media Files</div>
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Filename</th>
+                            <th>Size</th>
+                            <th>Type</th>
+                            <th style="text-align:right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inspectorLargestTable"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Oldest Files Card -->
+        <div class="card" style="flex:1; min-width:320px;">
+            <div class="card-title"><span class="icon">⏳</span> Oldest Untouched Media</div>
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Filename</th>
+                            <th>Modified</th>
+                            <th>Size</th>
+                            <th style="text-align:right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inspectorOldestTable"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</div>
+</div>
+{{ end }}
