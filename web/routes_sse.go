@@ -16,6 +16,9 @@ func registerSSERoutes(r *gin.Engine) {
 }
 
 func handleUnifiedEventStream(c *gin.Context) {
+	rc := http.NewResponseController(c.Writer)
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache, no-transform")
 	c.Writer.Header().Set("Connection", "keep-alive")

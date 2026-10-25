@@ -13,8 +13,11 @@ import (
 	"time"
 
 	"github.com/andreassag/morphic/internal/converter"
+	"github.com/andreassag/morphic/internal/database"
+	"github.com/andreassag/morphic/internal/events"
 	"github.com/andreassag/morphic/internal/organizer"
 	"github.com/andreassag/morphic/internal/shared"
+	"github.com/andreassag/morphic/internal/trash"
 	"github.com/fsnotify/fsnotify"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -192,7 +195,37 @@ func (d *Daemon) processFile(ctx context.Context, filePath string, ext string) {
 		plan := organizer.PlanSort([]string{filePath}, template, dir)
 		if len(plan) > 0 && plan[0].Status != "conflict" {
 			organizer.ExecuteSort(ctx, plan, "move")
-			slog.Info("watcher auto-organized file", "from", filePath, "to", plan[0].Destination)
+			dest := plan[0].Destination
+			slog.Info("watcher auto-organized file", "from", filePath, "to", dest)
+
+			metaBytes, _ := json.Marshal(map[string]interface{}{
+				"source":    "watcher",
+				"action":    "organize",
+				"template":  template,
+			})
+			auditEntry := database.AuditEntry{
+				Operation:       "sort",
+				Source:          "watcher",
+				OriginalPath:    filePath,
+				DestinationPath: dest,
+				FileSize:        info.Size(),
+				Metadata:        metaBytes,
+				Reversible:      true,
+				CreatedAt:       time.Now(),
+			}
+			if d.pool != nil {
+				_, _ = database.LogAction(ctx, d.pool, auditEntry)
+				_, _ = d.pool.Exec(ctx, `UPDATE watch_folders SET last_scan = NOW() WHERE id = $1;`, wf.ID)
+			} else {
+				_ = trash.LogStandaloneAudit(auditEntry)
+			}
+
+			events.DefaultBus.Publish("watcher", "file_processed", map[string]interface{}{
+				"action": "organize",
+				"source": filePath,
+				"dest":   dest,
+			})
+			events.DefaultBus.Publish("history", "new_entry", auditEntry)
 		}
 
 	case "convert":
@@ -215,6 +248,40 @@ func (d *Daemon) processFile(ctx context.Context, filePath string, ext string) {
 		dest, err := converter.ConvertFile(ctx, filePath, cfg.TargetExt, cfg.Codec, "", "", 0)
 		if err == nil {
 			slog.Info("watcher auto-converted file", "from", filePath, "to", dest)
+			newSize := int64(0)
+			if dstInfo, statErr := os.Stat(dest); statErr == nil {
+				newSize = dstInfo.Size()
+			}
+
+			metaBytes, _ := json.Marshal(map[string]interface{}{
+				"source":     "watcher",
+				"action":     "convert",
+				"target_ext": cfg.TargetExt,
+				"codec":      cfg.Codec,
+			})
+			auditEntry := database.AuditEntry{
+				Operation:       "convert",
+				Source:          "watcher",
+				OriginalPath:    filePath,
+				DestinationPath: dest,
+				FileSize:        newSize,
+				Metadata:        metaBytes,
+				Reversible:      false,
+				CreatedAt:       time.Now(),
+			}
+			if d.pool != nil {
+				_, _ = database.LogAction(ctx, d.pool, auditEntry)
+				_, _ = d.pool.Exec(ctx, `UPDATE watch_folders SET last_scan = NOW() WHERE id = $1;`, wf.ID)
+			} else {
+				_ = trash.LogStandaloneAudit(auditEntry)
+			}
+
+			events.DefaultBus.Publish("watcher", "file_processed", map[string]interface{}{
+				"action": "convert",
+				"source": filePath,
+				"dest":   dest,
+			})
+			events.DefaultBus.Publish("history", "new_entry", auditEntry)
 		}
 	}
 }

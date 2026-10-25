@@ -86,9 +86,9 @@ func SetupRouter(ctx context.Context, pool *pgxpool.Pool) (*gin.Engine, error) {
 	dupfinder.StartCleanup(ctx, 30*time.Minute)
 	organizer.StartCleanup(ctx, 30*time.Minute)
 	StartConverterCleanup(ctx, 30*time.Minute)
+	trash.StartAutoPurge(ctx, pool)
 
 	if pool != nil {
-		trash.StartAutoPurge(ctx, pool)
 		watcher.StartDaemon(ctx, pool)
 	}
 

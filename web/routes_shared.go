@@ -3,11 +3,8 @@ package web
 import (
 	"math"
 	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 
 	"github.com/andreassag/morphic/internal/converter"
@@ -16,92 +13,11 @@ import (
 )
 
 func registerSharedRoutes(r *gin.Engine) {
-	r.GET("/api/browse", handleBrowseDirectory)
+	registerBrowseRoutes(r)
 	r.POST("/api/browse/native", handleBrowseNative)
 	r.GET("/api/thumbnail", handleThumbnail)
 	r.GET("/api/system_info", handleSystemInfo)
 	r.GET("/api/media", handleMedia)
-}
-
-// handleBrowseDirectory lists directories for the in-page folder browser.
-func handleBrowseDirectory(c *gin.Context) {
-	rawPath := c.Query("path")
-	if rawPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			home = "."
-		}
-		rawPath = home
-	}
-
-	safePath, err := shared.ValidateSafePath(rawPath)
-	if err != nil {
-		respondError(c, http.StatusBadRequest, "INVALID_PATH", err.Error())
-		return
-	}
-
-	pathExists := true
-	browseDir := safePath
-	filterPrefix := ""
-
-	info, err := os.Stat(safePath)
-	if err != nil || !info.IsDir() {
-		pathExists = false
-		// If path doesn't exist as a directory, check parent directory for autocomplete matching
-		parentDir := filepath.Dir(safePath)
-		parentSafe, pErr := shared.ValidateSafeDirPath(parentDir)
-		if pErr == nil {
-			browseDir = parentSafe
-			filterPrefix = strings.ToLower(filepath.Base(safePath))
-		} else {
-			respondError(c, http.StatusBadRequest, "NOT_A_DIRECTORY", "Not a directory")
-			return
-		}
-	}
-
-	entries, err := os.ReadDir(browseDir)
-	if err != nil {
-		respondError(c, http.StatusInternalServerError, "READ_DIR_FAILED", err.Error())
-		return
-	}
-
-	type dirEntry struct {
-		Name string `json:"name"`
-		Path string `json:"path"`
-		Type string `json:"type"`
-	}
-	var dirs []dirEntry
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		if filterPrefix != "" && !strings.HasPrefix(strings.ToLower(e.Name()), filterPrefix) {
-			continue
-		}
-		if e.IsDir() {
-			dirs = append(dirs, dirEntry{
-				Name: e.Name(),
-				Path: filepath.Join(browseDir, e.Name()),
-				Type: "directory",
-			})
-		}
-	}
-	sort.Slice(dirs, func(i, j int) bool {
-		return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name)
-	})
-
-	parent := filepath.Dir(browseDir)
-	var parentPtr interface{} = parent
-	if parent == browseDir {
-		parentPtr = nil
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"current": browseDir,
-		"parent":  parentPtr,
-		"entries": dirs,
-		"exists":  pathExists,
-	})
 }
 
 // handleBrowseNative opens the OS-native folder picker dialog.
@@ -213,24 +129,6 @@ func handleMedia(c *gin.Context) {
 func isDir(path string) bool {
 	safe, err := shared.ValidateSafeDirPath(path)
 	return err == nil && safe != ""
-}
-
-// expandPath cleans the path and expands a leading tilde (~) to the user's home directory.
-func expandPath(p string) string {
-	p = strings.TrimSpace(p)
-	if p == "" {
-		return ""
-	}
-	if p == "~" {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Clean(home)
-		}
-	} else if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Clean(filepath.Join(home, p[2:]))
-		}
-	}
-	return filepath.Clean(p)
 }
 
 // isAbsPath verifies that p is a valid, clean absolute path and not in a protected system directory.

@@ -21,8 +21,13 @@
     --warning: #fbbf24;
     --warning-dim: rgba(251, 191, 36, 0.15);
     --radius-sm: 6px;
+    --radius-md: 10px;
     --radius: 10px;
     --radius-lg: 14px;
+    --text-primary: #e1e4ed;
+    --text-secondary: #8b8fa3;
+    --accent-success: #4ade80;
+    --accent-warning: #fbbf24;
     --shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
     --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
     --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);

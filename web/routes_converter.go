@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ type ConversionResult struct {
 	OriginalSizeFmt string `json:"original_size_fmt,omitempty"`
 	NewSizeFmt      string `json:"new_size_fmt,omitempty"`
 	SourceDeleted   bool   `json:"source_deleted"`
+	TrashPath       string `json:"trash_path,omitempty"`
 }
 
 type conversionJob struct {
@@ -121,6 +123,8 @@ func handleConverterConvert(c *gin.Context, pool *pgxpool.Pool) {
 	var req struct {
 		Files          []string `json:"files"`
 		TargetExt      string   `json:"target_ext"`
+		ImageTargetExt string   `json:"image_target_ext"`
+		VideoTargetExt string   `json:"video_target_ext"`
 		Codec          string   `json:"codec"`
 		HWAccel        string   `json:"hwaccel"`
 		DeleteOriginal bool     `json:"delete_original"`
@@ -130,14 +134,27 @@ func handleConverterConvert(c *gin.Context, pool *pgxpool.Pool) {
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
-	if len(req.Files) == 0 || req.TargetExt == "" {
-		respondError(c, http.StatusBadRequest, "MISSING_PARAMETERS", "files and target_ext required")
+	if len(req.Files) == 0 {
+		respondError(c, http.StatusBadRequest, "MISSING_PARAMETERS", "files required")
 		return
 	}
-	if !converter.IsValidTargetExt(req.TargetExt) {
+	if req.TargetExt == "" && req.ImageTargetExt == "" && req.VideoTargetExt == "" {
+		respondError(c, http.StatusBadRequest, "MISSING_PARAMETERS", "target_ext or image_target_ext/video_target_ext required")
+		return
+	}
+	if req.TargetExt != "" && !converter.IsValidTargetExt(req.TargetExt) {
 		respondError(c, http.StatusBadRequest, "INVALID_TARGET_EXT", "Unsupported or invalid target_ext: "+req.TargetExt)
 		return
 	}
+	if req.ImageTargetExt != "" && !converter.IsValidTargetExt(req.ImageTargetExt) {
+		respondError(c, http.StatusBadRequest, "INVALID_TARGET_EXT", "Unsupported or invalid image_target_ext: "+req.ImageTargetExt)
+		return
+	}
+	if req.VideoTargetExt != "" && !converter.IsValidTargetExt(req.VideoTargetExt) {
+		respondError(c, http.StatusBadRequest, "INVALID_TARGET_EXT", "Unsupported or invalid video_target_ext: "+req.VideoTargetExt)
+		return
+	}
+
 	var validatedFiles []string
 	for _, f := range req.Files {
 		safePath, err := shared.ValidateMediaFilePath(f)
@@ -172,12 +189,12 @@ func handleConverterConvert(c *gin.Context, pool *pgxpool.Pool) {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	conversionStore.RegisterCancel(job.ID, bgCancel)
 
-	go runConversion(bgCtx, job, req.Files, req.TargetExt, req.Codec, req.HWAccel, req.DeleteOriginal, av1CRF)
+	go runConversion(bgCtx, job, req.Files, req.TargetExt, req.ImageTargetExt, req.VideoTargetExt, req.Codec, req.HWAccel, req.DeleteOriginal, av1CRF)
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID})
 }
 
-func runConversion(ctx context.Context, job *conversionJob, files []string, targetExt, codec, hwaccel string, deleteOriginal bool, av1CRF int) {
+func runConversion(ctx context.Context, job *conversionJob, files []string, targetExt, imgTargetExt, vidTargetExt, codec, hwaccel string, deleteOriginal bool, av1CRF int) {
 	defer func() {
 		job.mu.Lock()
 		job.CurrentFile = ""
@@ -188,6 +205,7 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 	}()
 
 	total := len(files)
+	var deletedSources []string
 
 	for i, source := range files {
 		select {
@@ -211,6 +229,9 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 		job.Progress = float64(i) / float64(total)
 		job.mu.Unlock()
 
+		if job.Pool != nil {
+			_ = database.UpdateJobProgress(ctx, job.Pool, job.ID, job.Progress, fmt.Sprintf("Converting %d of %d: %s", i+1, total, filepath.Base(source)))
+		}
 		events.DefaultBus.Publish("converter", "progress", convProgressMap(job))
 
 		safeSource, err := shared.ValidateMediaFilePath(source)
@@ -222,10 +243,28 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 			}
 			job.mu.Lock()
 			job.Results = append(job.Results, result)
+			job.Completed = i + 1
+			job.Progress = float64(i+1) / float64(total)
 			job.mu.Unlock()
+			events.DefaultBus.Publish("converter", "progress", convProgressMap(job))
 			continue
 		}
 		source = safeSource
+
+		// Determine target extension for this specific file
+		fileTargetExt := targetExt
+		if shared.IsVideo(source) {
+			if vidTargetExt != "" {
+				fileTargetExt = vidTargetExt
+			}
+		} else {
+			if imgTargetExt != "" {
+				fileTargetExt = imgTargetExt
+			}
+		}
+		if fileTargetExt == "" {
+			fileTargetExt = targetExt
+		}
 
 		result := ConversionResult{
 			Source:        source,
@@ -237,7 +276,7 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 			origSize = info.Size()
 		}
 
-		dest, err := converter.ConvertFile(ctx, source, targetExt, codec, hwaccel, "", av1CRF)
+		dest, err := converter.ConvertFile(ctx, source, fileTargetExt, codec, hwaccel, "", av1CRF)
 		if err != nil {
 			result.Status = "error"
 			result.Error = err.Error()
@@ -257,7 +296,7 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 			// Log conversion to audit history
 			auditMetaBytes, _ := json.Marshal(map[string]interface{}{
 				"source":        "converter",
-				"target_ext":    targetExt,
+				"target_ext":    fileTargetExt,
 				"codec":         codec,
 				"original_size": origSize,
 				"new_size":      newSize,
@@ -283,8 +322,19 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 				absSrc, errSrc := filepath.Abs(source)
 				absDest, errDest := filepath.Abs(dest)
 				if errSrc == nil && errDest == nil && absSrc != absDest && newSize > 0 {
-					_ = executeDeleteFiles(ctx, job.Pool, []string{source}, "converter")
-					result.SourceDeleted = true
+					auditID, trashPath, _, trashErr := trash.MoveToTrash(ctx, job.Pool, source, "converter")
+					if trashErr == nil {
+						result.SourceDeleted = true
+						result.TrashPath = trashPath
+						deletedSources = append(deletedSources, source)
+						events.DefaultBus.Publish("trash", "file_trashed", gin.H{
+							"id":         auditID,
+							"trash_path": trashPath,
+							"source":     "converter",
+						})
+					} else {
+						slog.Warn("converter failed to move original to trash", "file", source, "err", trashErr)
+					}
 				}
 			}
 		}
@@ -319,6 +369,29 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 	}
 	job.mu.Unlock()
 
+	// If originals were deleted, log a single summary audit operation for the deletions
+	if len(deletedSources) > 0 {
+		deleteMeta, _ := json.Marshal(map[string]interface{}{
+			"source": "converter",
+			"count":  len(deletedSources),
+		})
+		delOp := database.AuditOperation{
+			Operation: "delete",
+			Source:    "converter",
+			Summary:   fmt.Sprintf("Moved %d converted original file(s) to Safe Trash", len(deletedSources)),
+			ItemCount: len(deletedSources),
+			Status:    "completed",
+			Metadata:  deleteMeta,
+			CreatedAt: time.Now(),
+		}
+		if job.Pool != nil {
+			_, _ = database.LogOperation(context.Background(), job.Pool, delOp)
+		} else {
+			_ = trash.LogStandaloneOperation(delOp)
+		}
+		events.DefaultBus.Publish("history", "operation_logged", delOp)
+	}
+
 	if len(job.Results) > 0 {
 		status := "completed"
 		if failCount > 0 && successCount > 0 {
@@ -327,21 +400,35 @@ func runConversion(ctx context.Context, job *conversionJob, files []string, targ
 			status = "failed"
 		}
 
+		usedExt := targetExt
+		if usedExt == "" {
+			if imgTargetExt != "" {
+				usedExt = imgTargetExt
+			}
+			if vidTargetExt != "" {
+				if usedExt != "" {
+					usedExt += " & " + vidTargetExt
+				} else {
+					usedExt = vidTargetExt
+				}
+			}
+		}
+
 		var summary string
 		if successCount > 0 {
 			summary = fmt.Sprintf("Converted %d file(s) to %s (%s → %s)",
-				successCount, targetExt,
+				successCount, usedExt,
 				shared.FormatFileSize(totalOrigBytes),
 				shared.FormatFileSize(totalNewBytes))
 			if failCount > 0 {
 				summary += fmt.Sprintf(" [%d failed]", failCount)
 			}
 		} else {
-			summary = fmt.Sprintf("Failed converting %d file(s) to %s", len(job.Results), targetExt)
+			summary = fmt.Sprintf("Failed converting %d file(s) to %s", len(job.Results), usedExt)
 		}
 
 		bulkMetaBytes, _ := json.Marshal(map[string]interface{}{
-			"target_ext":  targetExt,
+			"target_ext":  usedExt,
 			"codec":       codec,
 			"total_files": len(job.Results),
 			"successful":  successCount,

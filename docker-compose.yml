@@ -21,7 +21,14 @@ services:
     volumes:
       - morphic_data:/app/data
       - ./media:/media
-      - /mnt/d:/mnt/d
+      # Windows drives, as seen from the Docker host, exposed inside the container as /mnt/<drive>.
+      # Default WSL layout is /mnt/c, /mnt/d, ... If your WSL uses a custom automount root
+      # (/etc/wsl.conf: [automount] root = /) the drives live at /c, /d, ... instead; set the
+      # MORPHIC_DRIVE_* variables in .env accordingly. Verify with: ls /d/storage (or /mnt/d/storage).
+      - ${MORPHIC_DRIVE_C:-/mnt/c}:/mnt/c
+      - ${MORPHIC_DRIVE_D:-/mnt/d}:/mnt/d
+      - ${MORPHIC_DRIVE_E:-/mnt/e}:/mnt/e
+      - ${MORPHIC_DRIVE_F:-/mnt/f}:/mnt/f
     depends_on:
       postgres:
         condition: service_healthy

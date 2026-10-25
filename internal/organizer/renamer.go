@@ -92,6 +92,14 @@ func PlanRename(files []string, tmpl string, operation string, startSeq int) []R
 			}
 		} else {
 			destSet[destPath] = i
+			if _, err := os.Stat(destPath); err == nil {
+				absSrc, _ := filepath.Abs(f.Path)
+				absDest, _ := filepath.Abs(destPath)
+				if absSrc != absDest {
+					entry.Status = "conflict"
+					entry.Error = "destination file already exists on disk"
+				}
+			}
 		}
 
 		plan[i] = entry

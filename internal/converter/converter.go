@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/andreassag/morphic/internal/shared"
@@ -21,6 +22,13 @@ type HWAccelProfile struct {
 	Type     string   `json:"type"` // "nvenc", "qsv", "amf", "vaapi", "videotoolbox"
 	Encoders []string `json:"encoders"`
 }
+
+var (
+	hwaccelsOnce     sync.Once
+	cachedHWAccels   []HWAccelProfile
+	encoderCacheMu   sync.RWMutex
+	encoderAvailable = make(map[string]bool)
+)
 
 // probeVideoBitrate returns the total bitrate (bits/s) of source, or 0 on failure.
 func probeVideoBitrate(ctx context.Context, source, ffmpegBin string) int64 {
@@ -50,16 +58,28 @@ func probeVideoBitrate(ctx context.Context, source, ffmpegBin string) int64 {
 
 // ffmpegHasEncoder checks if the given binary lists a particular encoder in -encoders.
 func ffmpegHasEncoder(ctx context.Context, bin, encoder string) bool {
-	out, err := exec.CommandContext(ctx, bin, "-hide_banner", "-encoders").Output()
-	if err != nil {
-		return false
+	key := bin + ":" + encoder
+	encoderCacheMu.RLock()
+	val, ok := encoderAvailable[key]
+	encoderCacheMu.RUnlock()
+	if ok {
+		return val
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, encoder) {
-			return true
+
+	out, err := exec.CommandContext(ctx, bin, "-hide_banner", "-encoders").Output()
+	has := false
+	if err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, encoder) {
+				has = true
+				break
+			}
 		}
 	}
-	return false
+	encoderCacheMu.Lock()
+	encoderAvailable[key] = has
+	encoderCacheMu.Unlock()
+	return has
 }
 
 // ffmpegCanEncode performs a fast single-frame probe to ensure the encoder can actually initialize in this environment.
@@ -83,93 +103,97 @@ func ffmpegCanEncode(ctx context.Context, bin, encoder string) bool {
 	return cmd.Run() == nil
 }
 
-// DetectAvailableHWAccels probes available GPU hardware encoders.
+// DetectAvailableHWAccels probes available GPU hardware encoders (cached via sync.Once).
 func DetectAvailableHWAccels(ctx context.Context) []HWAccelProfile {
-	bin := "ffmpeg"
-	if candidates := shared.FFmpegCandidates(); len(candidates) > 0 {
-		bin = candidates[0]
-	} else {
-		return nil
-	}
-
-	var profiles []HWAccelProfile
-
-	// NVENC (NVIDIA)
-	var nvencEncoders []string
-	for _, enc := range []string{"h264_nvenc", "hevc_nvenc", "av1_nvenc"} {
-		if ffmpegCanEncode(ctx, bin, enc) {
-			nvencEncoders = append(nvencEncoders, enc)
+	hwaccelsOnce.Do(func() {
+		bin := "ffmpeg"
+		if candidates := shared.FFmpegCandidates(); len(candidates) > 0 {
+			bin = candidates[0]
+		} else {
+			return
 		}
-	}
-	if len(nvencEncoders) > 0 {
-		profiles = append(profiles, HWAccelProfile{
-			Name:     "NVIDIA NVENC",
-			Type:     "nvenc",
-			Encoders: nvencEncoders,
-		})
-	}
 
-	// QSV (Intel QuickSync)
-	var qsvEncoders []string
-	for _, enc := range []string{"h264_qsv", "hevc_qsv", "av1_qsv"} {
-		if ffmpegCanEncode(ctx, bin, enc) {
-			qsvEncoders = append(qsvEncoders, enc)
+		var profiles []HWAccelProfile
+
+		// NVENC (NVIDIA)
+		var nvencEncoders []string
+		for _, enc := range []string{"h264_nvenc", "hevc_nvenc", "av1_nvenc"} {
+			if ffmpegCanEncode(ctx, bin, enc) {
+				nvencEncoders = append(nvencEncoders, enc)
+			}
 		}
-	}
-	if len(qsvEncoders) > 0 {
-		profiles = append(profiles, HWAccelProfile{
-			Name:     "Intel QuickSync (QSV)",
-			Type:     "qsv",
-			Encoders: qsvEncoders,
-		})
-	}
-
-	// AMF (AMD)
-	var amfEncoders []string
-	for _, enc := range []string{"h264_amf", "hevc_amf", "av1_amf"} {
-		if ffmpegCanEncode(ctx, bin, enc) {
-			amfEncoders = append(amfEncoders, enc)
+		if len(nvencEncoders) > 0 {
+			profiles = append(profiles, HWAccelProfile{
+				Name:     "NVIDIA NVENC",
+				Type:     "nvenc",
+				Encoders: nvencEncoders,
+			})
 		}
-	}
-	if len(amfEncoders) > 0 {
-		profiles = append(profiles, HWAccelProfile{
-			Name:     "AMD AMF",
-			Type:     "amf",
-			Encoders: amfEncoders,
-		})
-	}
 
-	// VAAPI (Linux)
-	var vaapiEncoders []string
-	for _, enc := range []string{"h264_vaapi", "hevc_vaapi", "av1_vaapi"} {
-		if ffmpegCanEncode(ctx, bin, enc) {
-			vaapiEncoders = append(vaapiEncoders, enc)
+		// QSV (Intel QuickSync)
+		var qsvEncoders []string
+		for _, enc := range []string{"h264_qsv", "hevc_qsv", "av1_qsv"} {
+			if ffmpegCanEncode(ctx, bin, enc) {
+				qsvEncoders = append(qsvEncoders, enc)
+			}
 		}
-	}
-	if len(vaapiEncoders) > 0 {
-		profiles = append(profiles, HWAccelProfile{
-			Name:     "VAAPI",
-			Type:     "vaapi",
-			Encoders: vaapiEncoders,
-		})
-	}
-
-	// VideoToolbox (Apple)
-	var vtEncoders []string
-	for _, enc := range []string{"h264_videotoolbox", "hevc_videotoolbox"} {
-		if ffmpegCanEncode(ctx, bin, enc) {
-			vtEncoders = append(vtEncoders, enc)
+		if len(qsvEncoders) > 0 {
+			profiles = append(profiles, HWAccelProfile{
+				Name:     "Intel QuickSync (QSV)",
+				Type:     "qsv",
+				Encoders: qsvEncoders,
+			})
 		}
-	}
-	if len(vtEncoders) > 0 {
-		profiles = append(profiles, HWAccelProfile{
-			Name:     "Apple VideoToolbox",
-			Type:     "videotoolbox",
-			Encoders: vtEncoders,
-		})
-	}
 
-	return profiles
+		// AMF (AMD)
+		var amfEncoders []string
+		for _, enc := range []string{"h264_amf", "hevc_amf", "av1_amf"} {
+			if ffmpegCanEncode(ctx, bin, enc) {
+				amfEncoders = append(amfEncoders, enc)
+			}
+		}
+		if len(amfEncoders) > 0 {
+			profiles = append(profiles, HWAccelProfile{
+				Name:     "AMD AMF",
+				Type:     "amf",
+				Encoders: amfEncoders,
+			})
+		}
+
+		// VAAPI (Linux)
+		var vaapiEncoders []string
+		for _, enc := range []string{"h264_vaapi", "hevc_vaapi", "av1_vaapi"} {
+			if ffmpegCanEncode(ctx, bin, enc) {
+				vaapiEncoders = append(vaapiEncoders, enc)
+			}
+		}
+		if len(vaapiEncoders) > 0 {
+			profiles = append(profiles, HWAccelProfile{
+				Name:     "VAAPI",
+				Type:     "vaapi",
+				Encoders: vaapiEncoders,
+			})
+		}
+
+		// VideoToolbox (Apple)
+		var vtEncoders []string
+		for _, enc := range []string{"h264_videotoolbox", "hevc_videotoolbox"} {
+			if ffmpegCanEncode(ctx, bin, enc) {
+				vtEncoders = append(vtEncoders, enc)
+			}
+		}
+		if len(vtEncoders) > 0 {
+			profiles = append(profiles, HWAccelProfile{
+				Name:     "Apple VideoToolbox",
+				Type:     "videotoolbox",
+				Encoders: vtEncoders,
+			})
+		}
+
+		cachedHWAccels = profiles
+	})
+
+	return cachedHWAccels
 }
 
 // getVideoEncoder returns the ffmpeg encoder name for the given codec ID and requested hardware accelerator.
@@ -343,6 +367,25 @@ func IsValidTargetExt(ext string) bool {
 	return vidErr == nil
 }
 
+func uniqueDestination(dir, stem, ext string) string {
+	dest := filepath.Join(dir, stem+ext)
+	if _, err := os.Stat(dest); err != nil {
+		return dest
+	}
+	for i := 1; ; i++ {
+		var suffix string
+		if i == 1 {
+			suffix = "_converted"
+		} else {
+			suffix = fmt.Sprintf("_converted_%d", i)
+		}
+		cand := filepath.Join(dir, stem+suffix+ext)
+		if _, err := os.Stat(cand); err != nil {
+			return cand
+		}
+	}
+}
+
 // ConvertImage converts an image file using the imaging library or ffmpeg.
 func ConvertImage(ctx context.Context, source, targetExt, outputDir string) (string, error) {
 	if !filepath.IsAbs(source) || strings.Contains(source, "\x00") {
@@ -354,21 +397,15 @@ func ConvertImage(ctx context.Context, source, targetExt, outputDir string) (str
 	}
 
 	stem := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))
-	var dest string
+	targetDir := filepath.Dir(source)
 	if outputDir != "" {
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
 			return "", fmt.Errorf("creating output directory: %w", err)
 		}
-		dest = filepath.Join(outputDir, stem+ext)
-	} else {
-		dest = filepath.Join(filepath.Dir(source), stem+ext)
+		targetDir = outputDir
 	}
 
-	// Avoid overwriting
-	if _, err := os.Stat(dest); err == nil {
-		dest = filepath.Join(filepath.Dir(dest),
-			strings.TrimSuffix(filepath.Base(dest), ext)+"_converted"+ext)
-	}
+	dest := uniqueDestination(targetDir, stem, ext)
 
 	sourceExt := shared.NormaliseExt(filepath.Ext(source))
 	if sourceExt == ".avif" || ext == ".avif" {
@@ -416,7 +453,7 @@ func convertImageByFFmpeg(ctx context.Context, source, dest, ext string) (string
 			} else if ffmpegHasEncoder(ctx, bin, "libaom-av1") {
 				args = append(args, "-c:v", "libaom-av1", "-crf", "28", "-cpu-used", "4")
 			} else {
-				args = append(args, "-c:v", "libx264")
+				return "", fmt.Errorf("no AV1 encoder available (libsvtav1 or libaom-av1 required for .avif output)")
 			}
 		} else if extLower == ".webp" {
 			args = append(args, "-c:v", "libwebp")
@@ -450,21 +487,15 @@ func ConvertVideo(ctx context.Context, source, targetExt, codec, hwaccel, output
 	}
 
 	stem := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))
-	var dest string
+	targetDir := filepath.Dir(source)
 	if outputDir != "" {
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
 			return "", fmt.Errorf("creating output directory: %w", err)
 		}
-		dest = filepath.Join(outputDir, stem+ext)
-	} else {
-		dest = filepath.Join(filepath.Dir(source), stem+ext)
+		targetDir = outputDir
 	}
 
-	// Avoid overwriting
-	if _, err := os.Stat(dest); err == nil {
-		dest = filepath.Join(filepath.Dir(dest),
-			strings.TrimSuffix(filepath.Base(dest), ext)+"_converted"+ext)
-	}
+	dest := uniqueDestination(targetDir, stem, ext)
 
 	if codec == "" {
 		codec = "h264"

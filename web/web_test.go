@@ -135,6 +135,81 @@ func TestBrowseEndpoint_TildeAndAbs(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("browse with tilde path returned %d, want %d", w.Code, http.StatusOK)
 	}
+
+	// Test GET /api/browse?path=/ (root directory should be browsable)
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/api/browse?path=/", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("browse with root path '/' returned %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestBrowseResolve_FindsPickedFolderByNameAndChildren(t *testing.T) {
+	r := setupTestRouter(t)
+
+	tmp := t.TempDir()
+	// Two folders with the same name; only one contains the picked children.
+	target := filepath.Join(tmp, "a", "morphic_pick_xyz")
+	decoy := filepath.Join(tmp, "b", "morphic_pick_xyz")
+	for _, d := range []string{target, decoy} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = os.WriteFile(filepath.Join(target, "one.jpg"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(target, "two.jpg"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(decoy, "other.txt"), []byte("x"), 0o644)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":     "morphic_pick_xyz",
+		"children": []string{"One.JPG", "two.jpg"},
+		"hint":     tmp,
+	})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/browse/resolve", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("resolve returned %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Resolved bool   `json:"resolved"`
+		Path     string `json:"path"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid resolve response: %v", err)
+	}
+	if !resp.Resolved || resp.Path != target {
+		t.Errorf("expected resolved path %q, got resolved=%v path=%q", target, resp.Resolved, resp.Path)
+	}
+
+	// Unknown folder: not resolved, no candidates, still 200
+	body, _ = json.Marshal(map[string]interface{}{"name": "definitely_not_a_real_folder_123", "hint": tmp})
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("POST", "/api/browse/resolve", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("resolve (unknown) returned %d, want 200", w.Code)
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Resolved {
+		t.Errorf("expected unresolved result for unknown folder, got path=%q", resp.Path)
+	}
+}
+
+func TestBrowseEndpoint_TranslatesWindowsPaths(t *testing.T) {
+	r := setupTestRouter(t)
+
+	// "C:\" style paths are translated to /mnt/c on non-Windows runners; the request must not 500.
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", `/api/browse?path=D%3A%5CPhotos`, nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK && w.Code != http.StatusBadRequest {
+		t.Errorf("windows-style path returned %d, want 200 or 400", w.Code)
+	}
 }
 
 func TestConverterScanEndpoint(t *testing.T) {
@@ -363,5 +438,118 @@ func TestMediaCompareAndDiff(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 DIFF_FAILED for video diff, got %d", w.Code)
+	}
+}
+
+func TestTrashDeleteAndEmptyEndpoints(t *testing.T) {
+	trashDir := t.TempDir()
+	t.Setenv("MORPHIC_TRASH_DIR", trashDir)
+
+	r := setupTestRouter(t)
+
+	tmp := t.TempDir()
+	f1 := filepath.Join(tmp, "trash1.txt")
+	f2 := filepath.Join(tmp, "trash2.txt")
+	_ = os.WriteFile(f1, []byte("data 1"), 0o644)
+	_ = os.WriteFile(f2, []byte("data 2"), 0o644)
+
+	// Move both to trash via delete endpoint
+	body, _ := json.Marshal(map[string]interface{}{"files": []string{f1, f2}})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/converter/delete", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete failed: %d", w.Code)
+	}
+
+	// List trash
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/api/trash", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list trash failed: %d", w.Code)
+	}
+	var listResp struct {
+		Entries []map[string]interface{} `json:"entries"`
+		Total   int64                    `json:"total"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &listResp)
+	if listResp.Total != 2 {
+		t.Fatalf("expected 2 trash items, got %d", listResp.Total)
+	}
+
+	// Delete single item via DELETE /api/trash/:id
+	firstID := int64(listResp.Entries[0]["id"].(float64))
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("DELETE", fmt.Sprintf("/api/trash/%d", firstID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("DELETE /api/trash/:id returned %d, want 200", w.Code)
+	}
+
+	// Verify count is now 1
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/api/trash", nil)
+	r.ServeHTTP(w, req)
+	_ = json.Unmarshal(w.Body.Bytes(), &listResp)
+	if listResp.Total != 1 {
+		t.Errorf("expected 1 remaining trash item, got %d", listResp.Total)
+	}
+
+	// Empty remaining items via DELETE /api/trash
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("DELETE", "/api/trash", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("DELETE /api/trash returned %d, want 200", w.Code)
+	}
+
+	// Verify trash is empty
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/api/trash", nil)
+	r.ServeHTTP(w, req)
+	_ = json.Unmarshal(w.Body.Bytes(), &listResp)
+	if listResp.Total != 0 {
+		t.Errorf("expected 0 trash items after empty, got %d", listResp.Total)
+	}
+}
+
+func TestOrganizerPlanAndExecuteFlow(t *testing.T) {
+	r := setupTestRouter(t)
+
+	tmp := t.TempDir()
+	f1 := filepath.Join(tmp, "photo1.jpg")
+	_ = os.WriteFile(f1, []byte("fake jpeg content"), 0o644)
+
+	// POST /api/organizer/plan
+	planBody, _ := json.Marshal(map[string]interface{}{
+		"folder":    tmp,
+		"mode":      "sort",
+		"template":  "{year}/{month}",
+		"operation": "copy",
+	})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/organizer/plan", bytes.NewReader(planBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("POST /api/organizer/plan returned %d, want 202", w.Code)
+	}
+
+	var planResp struct {
+		JobID string `json:"job_id"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &planResp)
+	if planResp.JobID == "" {
+		t.Fatalf("expected job_id from plan start")
+	}
+
+	// GET /api/organizer/status/:id
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", fmt.Sprintf("/api/organizer/status/%s", planResp.JobID), nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("GET status returned %d, want 200", w.Code)
 	}
 }

@@ -9,6 +9,7 @@ let currentResults = null;
 let selectedDupFiles = new Set();
 let dupTimerInterval = null;
 let dupStartTimeMs = null;
+let dupPollTimer = null;
 
 function startDupTimer() {
     stopDupTimer();
@@ -30,15 +31,72 @@ function stopDupTimer() {
     }
 }
 
+function startDupPolling(jobId) {
+    stopDupPolling();
+    dupPollTimer = setInterval(() => {
+        if (currentJobId === jobId) {
+            pollDupStatus(jobId);
+        }
+    }, 1500);
+}
+
+function stopDupPolling() {
+    if (dupPollTimer) {
+        clearInterval(dupPollTimer);
+        dupPollTimer = null;
+    }
+}
+
+async function pollDupStatus(jobId) {
+    if (!jobId) return;
+    try {
+        const res = await fetch(`/api/dupfinder/scan/${jobId}/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (currentJobId !== jobId) return;
+
+        if (data.status === 'done') {
+            stopDupPolling();
+            // Fetch final results
+            const resResults = await fetch(`/api/dupfinder/scan/${jobId}/results`);
+            if (resResults.ok) {
+                const resultsData = await resResults.json();
+                finishDupScan(resultsData);
+            } else {
+                finishDupScan(data);
+            }
+        } else if (data.status === 'cancelled') {
+            stopDupPolling();
+            cancelDupUI();
+        } else if (data.status === 'failed') {
+            stopDupPolling();
+            cancelDupUI();
+            showToast(data.error || 'DupFinder scan failed', 'error');
+        } else if (data.status === 'running') {
+            updateDupProgress(data);
+        }
+    } catch (err) {
+        console.error('Error polling dupfinder status:', err);
+    }
+}
+
 export function initDupfinder() {
     onEvent('dupfinder', (event) => {
         const payload = event.payload || event.data || event;
         if (event.type === 'progress') {
             updateDupProgress(payload);
         } else if (event.type === 'job_done') {
+            stopDupPolling();
             finishDupScan(payload);
         } else if (event.type === 'job_cancelled') {
+            stopDupPolling();
             cancelDupUI();
+        }
+    });
+
+    onEvent('system', (event) => {
+        if (event.type === 'reconnect' && currentJobId) {
+            pollDupStatus(currentJobId);
         }
     });
 }
@@ -83,6 +141,7 @@ export async function dupStartScan() {
 
         const data = await res.json();
         currentJobId = data.job_id;
+        startDupPolling(currentJobId);
         showToast('Dupfinder scan started...', 'info');
     } catch (err) {
         stopDupTimer();

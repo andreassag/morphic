@@ -54,6 +54,12 @@ func main() {
 		}
 		defer pool.Close()
 		slog.Info("PostgreSQL database connected and schema migrated successfully")
+		if unfinished, err := database.ListUnfinishedJobs(ctx, pool); err == nil && len(unfinished) > 0 {
+			for _, j := range unfinished {
+				_ = database.UpdateJobStatus(ctx, pool, j.ID, "failed", j.Progress, "Interrupted by server restart", "Interrupted by server restart", nil)
+			}
+			slog.Info("cleaned up stale unfinished jobs from previous session", "count", len(unfinished))
+		}
 	} else {
 		slog.Warn("no DATABASE_URL provided; running in standalone mode without persistent caching")
 	}
@@ -72,7 +78,6 @@ func main() {
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       120 * time.Second,
 	}
 

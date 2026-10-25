@@ -63,6 +63,21 @@ func IsProtectedSystemPath(cleanAbsPath string) bool {
 	if cleanAbsPath == "/" {
 		return true
 	}
+
+	// Allow application safe trash or morphic configuration dir even if running under /root/.morphic
+	if trashDir := os.Getenv("MORPHIC_TRASH_DIR"); trashDir != "" {
+		cleanTrash := filepath.Clean(trashDir)
+		if cleanAbsPath == cleanTrash || strings.HasPrefix(cleanAbsPath, cleanTrash+"/") {
+			return false
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home == "/root" {
+		morphicDir := filepath.Join(home, ".morphic")
+		if cleanAbsPath == morphicDir || strings.HasPrefix(cleanAbsPath, morphicDir+"/") {
+			return false
+		}
+	}
+
 	for _, prefix := range protectedPrefixesUnix {
 		if cleanAbsPath == prefix || strings.HasPrefix(cleanAbsPath, prefix+"/") {
 			return true

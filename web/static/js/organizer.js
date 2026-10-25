@@ -4,18 +4,86 @@ import { showToast, formatFileSize } from './ui.js';
 import { onEvent } from './events.js';
 
 let currentOrgJobId = null;
+let orgPollTimer = null;
 
 export function initOrganizer() {
     onEvent('organizer', (event) => {
         const payload = event.payload || event.data || event;
-        if (event.type === 'plan_progress' || event.type === 'execute_progress') {
-            updateOrgProgress(payload);
-        } else if (event.type === 'plan_ready') {
-            finishOrgPlan(payload);
-        } else if (event.type === 'execute_done') {
-            finishOrgExecute(payload);
+        if (event.type === 'progress') {
+            if (payload.phase === 'planned') {
+                stopOrgPolling();
+                finishOrgPlan(payload);
+            } else if (payload.phase === 'done') {
+                stopOrgPolling();
+                finishOrgExecute(payload);
+            } else {
+                updateOrgProgress(payload);
+            }
+        } else if (event.type === 'job_done') {
+            stopOrgPolling();
+            if (payload.phase === 'planned') {
+                finishOrgPlan(payload);
+            } else {
+                finishOrgExecute(payload);
+            }
+        } else if (event.type === 'job_failed') {
+            stopOrgPolling();
+            cancelOrgUI(payload.error || 'Organizer job failed');
+        } else if (event.type === 'job_cancelled') {
+            stopOrgPolling();
+            cancelOrgUI('Organizer job was cancelled');
         }
     });
+
+    onEvent('system', (event) => {
+        if (event.type === 'reconnect' && currentOrgJobId) {
+            pollOrgStatus(currentOrgJobId);
+        }
+    });
+}
+
+function startOrgPolling(jobId) {
+    stopOrgPolling();
+    orgPollTimer = setInterval(() => {
+        if (currentOrgJobId === jobId) {
+            pollOrgStatus(jobId);
+        }
+    }, 1500);
+}
+
+function stopOrgPolling() {
+    if (orgPollTimer) {
+        clearInterval(orgPollTimer);
+        orgPollTimer = null;
+    }
+}
+
+async function pollOrgStatus(jobId) {
+    if (!jobId) return;
+    try {
+        const res = await fetch(`/api/organizer/status/${jobId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (currentOrgJobId !== jobId) return;
+
+        if (data.phase === 'planned') {
+            stopOrgPolling();
+            finishOrgPlan(data);
+        } else if (data.phase === 'done' || data.status === 'done') {
+            stopOrgPolling();
+            finishOrgExecute(data);
+        } else if (data.status === 'failed') {
+            stopOrgPolling();
+            cancelOrgUI(data.error || 'Job failed');
+        } else if (data.status === 'cancelled') {
+            stopOrgPolling();
+            cancelOrgUI('Job cancelled');
+        } else {
+            updateOrgProgress(data);
+        }
+    } catch (err) {
+        console.error('Error polling organizer status:', err);
+    }
 }
 
 export function orgModeChanged() {
@@ -73,6 +141,7 @@ export async function orgStartPlan() {
 
         const data = await res.json();
         currentOrgJobId = data.job_id;
+        startOrgPolling(currentOrgJobId);
         showToast('Generating organize plan...', 'info');
     } catch (err) {
         showToast(err.message, 'error');
@@ -97,6 +166,7 @@ export async function orgExecute() {
         });
 
         if (!res.ok) throw new Error('Failed to start execution');
+        startOrgPolling(currentOrgJobId);
         showToast('Executing organize plan...', 'info');
     } catch (err) {
         showToast(err.message, 'error');
@@ -113,6 +183,14 @@ export async function orgCancelJob() {
     } catch (err) {
         console.error(err);
     }
+}
+
+function cancelOrgUI(msg) {
+    const progressCard = document.getElementById('orgProgress');
+    if (progressCard) progressCard.style.display = 'none';
+    const execBtn = document.getElementById('orgExecBtn');
+    if (execBtn) execBtn.disabled = false;
+    showToast(msg || 'Organizer job interrupted', 'warning');
 }
 
 function updateOrgProgress(payload) {
@@ -156,13 +234,14 @@ function finishOrgPlan(payload) {
     `;
 
     plan.forEach(item => {
+        const conflictLabel = item.conflict_reason ? `Conflict: ${item.conflict_reason}` : 'Conflict';
         html += `
             <tr>
                 <td>${item.source.split('/').pop()}</td>
                 <td><code>${item.destination}</code></td>
                 <td>
                     ${item.conflict 
-                        ? `<span class="badge badge-danger">Conflict: ${item.conflict_reason}</span>` 
+                        ? `<span class="badge badge-danger">${conflictLabel}</span>` 
                         : `<span class="badge badge-success">OK</span>`}
                 </td>
             </tr>
@@ -185,11 +264,20 @@ function finishOrgExecute(payload) {
     if (progressCard) progressCard.style.display = 'none';
     if (execBtn) execBtn.style.display = 'none';
 
+    const execData = payload.execution || {};
+    const completed = execData.completed || payload.processed || 0;
+    const errors = execData.errors || 0;
+    const skipped = execData.skipped || 0;
+
     if (execContent) {
         execContent.innerHTML = `
             <div class="card">
                 <div class="card-title">✅ Execution Complete</div>
-                <p>Successfully processed organized files.</p>
+                <p style="font-size:14px;color:var(--text);margin-top:4px;">
+                    Successfully processed <strong>${completed}</strong> file(s)
+                    ${skipped > 0 ? `, <strong>${skipped}</strong> skipped (conflicts)` : ''}
+                    ${errors > 0 ? `, <span style="color:var(--danger);"><strong>${errors}</strong> errors</span>` : ''}.
+                </p>
             </div>
         `;
     }

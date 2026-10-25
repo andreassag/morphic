@@ -12,7 +12,23 @@
         <div class="form-row" style="margin-bottom:14px;">
             <div class="form-group" style="flex:2;">
                 <label for="watchNewPath">Directory to watch</label>
-                <input type="text" id="watchNewPath" placeholder="Enter an absolute directory path (e.g. /media/inbox)…" />
+                <div class="folder-input-row">
+                    <input type="text" id="watchNewPath" placeholder="Enter an absolute directory path (e.g. /media/inbox)…" autocomplete="off" />
+                    <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('watch')" title="Open your system's folder dialog">📁 Browse</button>
+                </div>
+                <div class="folder-browser" id="watchBrowser">
+                    <div class="fb-header">
+                        <span class="fb-path">~</span>
+                        <button class="btn btn-ghost btn-sm" onclick="closeBrowser('watch')">✕</button>
+                    </div>
+                    <div class="fb-item fb-parent" style="display:none">
+                        <span class="icon">⬆️</span> ..
+                    </div>
+                    <div class="fb-entries"></div>
+                    <div class="fb-footer">
+                        <button class="btn btn-primary btn-sm" onclick="selectBrowserFolder('watch')">✓ Use this folder</button>
+                    </div>
+                </div>
             </div>
             <div class="form-group narrow">
                 <label for="watchNewAction">Auto-Action</label>

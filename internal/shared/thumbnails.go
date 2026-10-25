@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andreassag/morphic/internal/database"
 	"github.com/disintegration/imaging"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -19,6 +20,7 @@ import (
 const (
 	DefaultThumbnailSize    = 200
 	DefaultThumbnailQuality = 80
+	MaxL1ThumbnailCacheSize = 1000
 )
 
 // ThumbnailCache provides a thread-safe cache for generated thumbnails.
@@ -45,7 +47,14 @@ func GenerateImageThumbnail(ctx context.Context, path string, size int) ([]byte,
 		size = DefaultThumbnailSize
 	}
 
-	cacheKey := fmt.Sprintf("%s:%d", path, size)
+	var fileSize int64
+	var modTime time.Time
+	if st, err := os.Stat(path); err == nil {
+		fileSize = st.Size()
+		modTime = st.ModTime()
+	}
+
+	cacheKey := fmt.Sprintf("%s:%d:%d:%d", path, size, fileSize, modTime.UnixNano())
 	thumbnailCache.mu.RLock()
 	if data, ok := thumbnailCache.store[cacheKey]; ok {
 		thumbnailCache.mu.RUnlock()
@@ -55,24 +64,10 @@ func GenerateImageThumbnail(ctx context.Context, path string, size int) ([]byte,
 	thumbnailCache.mu.RUnlock()
 
 	// Check L2 PostgreSQL cache
-	var fileSize int64
-	var modTime time.Time
-	if st, err := os.Stat(path); err == nil {
-		fileSize = st.Size()
-		modTime = st.ModTime()
-		if pool != nil {
-			var thumbData []byte
-			err := pool.QueryRow(ctx, `
-				SELECT thumb_data FROM thumbnail_cache
-				WHERE path = $1 AND file_size = $2 AND mod_time = $3 AND thumb_size = $4
-				LIMIT 1;
-			`, path, fileSize, modTime, size).Scan(&thumbData)
-			if err == nil && len(thumbData) > 0 {
-				thumbnailCache.mu.Lock()
-				thumbnailCache.store[cacheKey] = thumbData
-				thumbnailCache.mu.Unlock()
-				return thumbData, nil
-			}
+	if pool != nil && fileSize > 0 && !modTime.IsZero() {
+		if thumbData, err := database.LookupThumbnail(ctx, pool, path, fileSize, modTime, size); err == nil && len(thumbData) > 0 {
+			setL1Cache(cacheKey, thumbData)
+			return thumbData, nil
 		}
 	}
 
@@ -119,7 +114,14 @@ func GenerateVideoThumbnail(ctx context.Context, path string, size int) ([]byte,
 		size = DefaultThumbnailSize
 	}
 
-	cacheKey := fmt.Sprintf("video:%s:%d", path, size)
+	var fileSize int64
+	var modTime time.Time
+	if st, err := os.Stat(path); err == nil {
+		fileSize = st.Size()
+		modTime = st.ModTime()
+	}
+
+	cacheKey := fmt.Sprintf("video:%s:%d:%d:%d", path, size, fileSize, modTime.UnixNano())
 	thumbnailCache.mu.RLock()
 	if data, ok := thumbnailCache.store[cacheKey]; ok {
 		thumbnailCache.mu.RUnlock()
@@ -129,24 +131,10 @@ func GenerateVideoThumbnail(ctx context.Context, path string, size int) ([]byte,
 	thumbnailCache.mu.RUnlock()
 
 	// Check L2 PostgreSQL cache
-	var fileSize int64
-	var modTime time.Time
-	if st, err := os.Stat(path); err == nil {
-		fileSize = st.Size()
-		modTime = st.ModTime()
-		if pool != nil {
-			var thumbData []byte
-			err := pool.QueryRow(ctx, `
-				SELECT thumb_data FROM thumbnail_cache
-				WHERE path = $1 AND file_size = $2 AND mod_time = $3 AND thumb_size = $4
-				LIMIT 1;
-			`, path, fileSize, modTime, size).Scan(&thumbData)
-			if err == nil && len(thumbData) > 0 {
-				thumbnailCache.mu.Lock()
-				thumbnailCache.store[cacheKey] = thumbData
-				thumbnailCache.mu.Unlock()
-				return thumbData, nil
-			}
+	if pool != nil && fileSize > 0 && !modTime.IsZero() {
+		if thumbData, err := database.LookupThumbnail(ctx, pool, path, fileSize, modTime, size); err == nil && len(thumbData) > 0 {
+			setL1Cache(cacheKey, thumbData)
+			return thumbData, nil
 		}
 	}
 
@@ -163,19 +151,29 @@ func GenerateVideoThumbnail(ctx context.Context, path string, size int) ([]byte,
 	return data, nil
 }
 
-func storeThumbData(ctx context.Context, pool *pgxpool.Pool, path string, fileSize int64, modTime time.Time, size int, cacheKey string, data []byte) {
+func setL1Cache(cacheKey string, data []byte) {
 	thumbnailCache.mu.Lock()
+	if len(thumbnailCache.store) >= MaxL1ThumbnailCacheSize {
+		// Evict half of the entries when cache exceeds capacity
+		count := 0
+		for k := range thumbnailCache.store {
+			delete(thumbnailCache.store, k)
+			count++
+			if count >= MaxL1ThumbnailCacheSize/2 {
+				break
+			}
+		}
+	}
 	thumbnailCache.store[cacheKey] = data
 	thumbnailCache.mu.Unlock()
+}
+
+func storeThumbData(ctx context.Context, pool *pgxpool.Pool, path string, fileSize int64, modTime time.Time, size int, cacheKey string, data []byte) {
+	setL1Cache(cacheKey, data)
 
 	if pool != nil && fileSize > 0 && !modTime.IsZero() {
 		go func() {
-			_, _ = pool.Exec(context.Background(), `
-				INSERT INTO thumbnail_cache (path, file_size, mod_time, thumb_size, thumb_data, created_at)
-				VALUES ($1, $2, $3, $4, $5, NOW())
-				ON CONFLICT (path, file_size, mod_time, thumb_size) DO UPDATE SET
-					thumb_data = EXCLUDED.thumb_data;
-			`, path, fileSize, modTime, size, data)
+			_ = database.StoreThumbnail(context.Background(), pool, path, fileSize, modTime, size, data)
 		}()
 	}
 }

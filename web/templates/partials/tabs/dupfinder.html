@@ -16,8 +16,8 @@
                 <div class="form-group">
                     <label for="dupFolder">Folder to scan</label>
                     <div class="folder-input-row">
-                        <input type="text" id="dupFolder" placeholder="Enter an absolute path (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
-                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('dupfinder')" title="Open OS file dialog">📁 Browse</button>
+                        <input type="text" id="dupFolder" placeholder="Absolute path (e.g. /media/photos or D:\Photos) – or click Browse…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('dupfinder')" title="Open your system's folder dialog">📁 Browse</button>
                     </div>
                     <div class="folder-browser" id="dupBrowser">
                         <div class="fb-header">

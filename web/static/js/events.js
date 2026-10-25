@@ -29,9 +29,10 @@ export function initEventSource() {
                 indicator.className = 'status-indicator online';
                 indicator.textContent = '● Live';
             }
+            dispatch('system', { type: 'reconnect' });
         };
 
-        const topics = ['converter', 'dupfinder', 'organizer', 'watcher', 'trash'];
+        const topics = ['converter', 'dupfinder', 'organizer', 'watcher', 'trash', 'history'];
         topics.forEach(topic => {
             eventSource.addEventListener(topic, (e) => {
                 try {

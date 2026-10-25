@@ -32,6 +32,7 @@ func registerWatcherRoutes(r *gin.Engine, pool *pgxpool.Pool) {
 				respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 				return
 			}
+			req.Path = expandPath(req.Path)
 			if req.Path == "" || !isAbsPath(req.Path) || !isDir(req.Path) {
 				respondError(c, http.StatusBadRequest, "INVALID_FOLDER", "Valid directory path required")
 				return

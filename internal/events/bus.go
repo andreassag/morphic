@@ -49,7 +49,7 @@ func (b *Bus) Subscribe(ctx context.Context, topics ...string) <-chan Event {
 		topicMap[t] = true
 	}
 
-	ch := make(chan Event, 64)
+	ch := make(chan Event, 256)
 	sub := &subscriber{
 		id:     id,
 		topics: topicMap,
@@ -71,6 +71,15 @@ func (b *Bus) Subscribe(ctx context.Context, topics ...string) <-chan Event {
 	return ch
 }
 
+func isPriorityEvent(eventType string) bool {
+	switch eventType {
+	case "job_done", "job_failed", "job_cancelled", "restored", "file_trashed", "operation_logged":
+		return true
+	default:
+		return false
+	}
+}
+
 // Publish broadcasts an event to all subscribers listening on that topic (or wildcard "*").
 func (b *Bus) Publish(topic, eventType string, payload interface{}) {
 	evt := Event{
@@ -83,12 +92,25 @@ func (b *Bus) Publish(topic, eventType string, payload interface{}) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
+	priority := isPriorityEvent(eventType)
+
 	for _, sub := range b.subscribers {
 		if len(sub.topics) == 0 || sub.topics[topic] || sub.topics["*"] {
 			select {
 			case sub.ch <- evt:
 			default:
-				// Non-blocking: drop if subscriber buffer is full
+				if priority {
+					// Buffer is full: evict the oldest event to guarantee terminal/critical event delivery
+					select {
+					case <-sub.ch:
+					default:
+					}
+					select {
+					case sub.ch <- evt:
+					default:
+					}
+				}
+				// Non-priority event dropped if subscriber buffer is full
 			}
 		}
 	}

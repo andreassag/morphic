@@ -16,8 +16,8 @@
                 <div class="form-group">
                     <label for="orgFolder">Source Folder</label>
                     <div class="folder-input-row">
-                        <input type="text" id="orgFolder" placeholder="Enter an absolute path (e.g. /media/photos)…" value="{{ .initial_folder }}" autocomplete="off" />
-                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('organizer')" title="Open OS file dialog">📁 Browse</button>
+                        <input type="text" id="orgFolder" placeholder="Absolute path (e.g. /media/photos or D:\Photos) – or click Browse…" value="{{ .initial_folder }}" autocomplete="off" />
+                        <button class="btn btn-ghost btn-sm" onclick="openNativeFolderExplorer('organizer')" title="Open your system's folder dialog">📁 Browse</button>
                     </div>
                     <div class="folder-browser" id="orgBrowser">
                         <div class="fb-header">

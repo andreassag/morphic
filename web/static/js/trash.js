@@ -76,6 +76,7 @@ export async function loadTrashHistory() {
             }
             if (!isReversed) {
                 actionsHtml += `<button class="btn btn-primary btn-sm" onclick="undoAuditAction(${item.id})" title="Restore to original location">↩️ Restore</button>`;
+                actionsHtml += `<button class="btn btn-danger btn-sm" onclick="deleteTrashItem(${item.id})" title="Permanently delete this file">🗑️ Delete</button>`;
             }
             actionsHtml += `</div>`;
 
@@ -97,6 +98,17 @@ export async function loadTrashHistory() {
         });
 
         tbody.innerHTML = html;
+
+        // Render pagination controls if applicable
+        const pagination = document.getElementById('trashPagination');
+        if (pagination) {
+            const total = data.total || entries.length;
+            if (total > 50) {
+                pagination.innerHTML = `<div style="font-size:12px;color:var(--text-dim);padding:8px 12px;">Showing ${entries.length} of ${total} items</div>`;
+            } else {
+                pagination.innerHTML = '';
+            }
+        }
     } catch (err) {
         showToast(err.message, 'error');
     }
@@ -111,6 +123,42 @@ export async function undoAuditAction(id) {
         }
 
         showToast('File successfully restored to original location!', 'success');
+        loadTrashHistory();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+export async function deleteTrashItem(id) {
+    if (!confirm('Are you sure you want to permanently delete this file? This cannot be undone.')) return;
+
+    try {
+        const res = await fetch(`/api/trash/${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error?.message || 'Delete failed');
+        }
+
+        const data = await res.json();
+        showToast(`Permanently deleted file (Freed: ${data.freed_formatted})`, 'success');
+        loadTrashHistory();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+export async function emptyAllTrash() {
+    if (!confirm('Are you sure you want to permanently delete ALL files in Safe Trash? This action CANNOT be undone!')) return;
+
+    try {
+        const res = await fetch('/api/trash', { method: 'DELETE' });
+        if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error?.message || 'Empty trash failed');
+        }
+
+        const data = await res.json();
+        showToast(`Emptied Safe Trash: ${data.deleted_count} file(s) permanently removed (Freed: ${data.freed_formatted})`, 'success');
         loadTrashHistory();
     } catch (err) {
         showToast(err.message, 'error');

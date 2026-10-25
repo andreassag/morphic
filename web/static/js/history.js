@@ -106,6 +106,16 @@ export async function loadAuditHistory() {
         });
 
         tbody.innerHTML = html;
+
+        const pagination = document.getElementById('historyPagination');
+        if (pagination) {
+            const total = data.total || entries.length;
+            if (total > 50) {
+                pagination.innerHTML = `<div style="font-size:12px;color:var(--text-dim);padding:8px 12px;">Showing ${entries.length} of ${total} entries</div>`;
+            } else {
+                pagination.innerHTML = '';
+            }
+        }
     } catch (err) {
         showToast(err.message, 'error');
     }

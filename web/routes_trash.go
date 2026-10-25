@@ -132,9 +132,94 @@ func registerTrashRoutes(r *gin.Engine, pool *pgxpool.Pool) {
 		g.POST("/history/:id/undo", restoreHandler)
 		g.POST("/trash/:id/restore", restoreHandler)
 
+		// Permanently delete a single trashed item
+		deleteSingleHandler := func(c *gin.Context) {
+			idStr := c.Param("id")
+			id, err := strconv.ParseInt(idStr, 10, 64)
+			if err != nil {
+				respondError(c, http.StatusBadRequest, "INVALID_ID", "Invalid audit log ID")
+				return
+			}
+
+			freedBytes, err := trash.DeleteItem(c.Request.Context(), pool, id)
+			if err != nil {
+				respondError(c, http.StatusInternalServerError, "DELETE_FAILED", err.Error())
+				return
+			}
+
+			op := database.AuditOperation{
+				Operation: "purge",
+				Source:    "trash",
+				Summary:   fmt.Sprintf("Permanently deleted item #%d from safe trash (freed %s)", id, shared.FormatFileSize(freedBytes)),
+				ItemCount: 1,
+				TotalSize: freedBytes,
+				Status:    "completed",
+				CreatedAt: time.Now(),
+			}
+			if pool != nil {
+				_, _ = database.LogOperation(c.Request.Context(), pool, op)
+			} else {
+				_ = trash.LogStandaloneOperation(op)
+			}
+
+			events.DefaultBus.Publish("trash", "deleted", gin.H{"id": id, "freed_bytes": freedBytes})
+			events.DefaultBus.Publish("history", "operation_logged", op)
+			c.JSON(http.StatusOK, gin.H{
+				"status":          "deleted",
+				"id":              id,
+				"freed_bytes":     freedBytes,
+				"freed_formatted": shared.FormatFileSize(freedBytes),
+			})
+		}
+
+		g.DELETE("/trash/:id", deleteSingleHandler)
+
+		// Empty all items from safe trash
+		emptyTrashHandler := func(c *gin.Context) {
+			count, freed, err := trash.EmptyTrash(c.Request.Context(), pool)
+			if err != nil {
+				respondError(c, http.StatusInternalServerError, "EMPTY_FAILED", err.Error())
+				return
+			}
+
+			if count > 0 {
+				op := database.AuditOperation{
+					Operation: "purge",
+					Source:    "trash",
+					Summary:   fmt.Sprintf("Emptied safe trash (%d item(s), freed %s)", count, shared.FormatFileSize(freed)),
+					ItemCount: count,
+					TotalSize: freed,
+					Status:    "completed",
+					CreatedAt: time.Now(),
+				}
+				if pool != nil {
+					_, _ = database.LogOperation(c.Request.Context(), pool, op)
+				} else {
+					_ = trash.LogStandaloneOperation(op)
+				}
+				events.DefaultBus.Publish("trash", "emptied", gin.H{"count": count, "freed_bytes": freed})
+				events.DefaultBus.Publish("history", "operation_logged", op)
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"status":          "emptied",
+				"deleted_count":   count,
+				"freed_bytes":     freed,
+				"freed_formatted": shared.FormatFileSize(freed),
+			})
+		}
+
+		g.DELETE("/trash", emptyTrashHandler)
+		g.POST("/trash/empty", emptyTrashHandler)
+
 		// Purge expired files from safe trash
 		g.POST("/trash/purge", func(c *gin.Context) {
-			days, _ := strconv.Atoi(c.DefaultQuery("days", "0"))
+			daysStr := c.DefaultQuery("days", "-1")
+			days, err := strconv.Atoi(daysStr)
+			if err != nil {
+				days = -1
+			}
+
 			purged, freed, err := trash.PurgeExpired(c.Request.Context(), pool, days)
 			if err != nil {
 				respondError(c, http.StatusInternalServerError, "PURGE_FAILED", err.Error())
@@ -161,6 +246,7 @@ func registerTrashRoutes(r *gin.Engine, pool *pgxpool.Pool) {
 				} else {
 					_ = trash.LogStandaloneOperation(op)
 				}
+				events.DefaultBus.Publish("trash", "purged", gin.H{"purged_count": purged, "freed_bytes": freed})
 				events.DefaultBus.Publish("history", "operation_logged", op)
 			}
 

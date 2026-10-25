@@ -9,6 +9,7 @@ let selectedFiles = new Set();
 let selectedExts = new Set(); // Multi-select filter for extensions
 let formatsData = null;
 let currentConvertJobId = null;
+let convertPollTimer = null;
 let showFullPaths = false;
 let currentSortBy = 'name';
 let conversionResults = new Map(); // path -> ConversionResult
@@ -21,11 +22,57 @@ export function initConverter() {
         if (event.type === 'progress') {
             updateConvertProgress(payload);
         } else if (event.type === 'job_done') {
+            stopConvertPolling();
             finishConversion(payload);
         } else if (event.type === 'job_cancelled') {
+            stopConvertPolling();
             cancelConversionUI();
         }
     });
+
+    onEvent('system', (event) => {
+        if (event.type === 'reconnect' && currentConvertJobId) {
+            pollConvertProgress(currentConvertJobId);
+        }
+    });
+}
+
+function startConvertPolling(jobId) {
+    stopConvertPolling();
+    convertPollTimer = setInterval(() => {
+        if (currentConvertJobId === jobId) {
+            pollConvertProgress(jobId);
+        }
+    }, 1500);
+}
+
+function stopConvertPolling() {
+    if (convertPollTimer) {
+        clearInterval(convertPollTimer);
+        convertPollTimer = null;
+    }
+}
+
+async function pollConvertProgress(jobId) {
+    if (!jobId) return;
+    try {
+        const res = await fetch(`/api/converter/progress/${jobId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (currentConvertJobId !== jobId) return;
+
+        if (data.status === 'done') {
+            stopConvertPolling();
+            finishConversion(data);
+        } else if (data.status === 'cancelled') {
+            stopConvertPolling();
+            cancelConversionUI();
+        } else if (data.status === 'running') {
+            updateConvertProgress(data);
+        }
+    } catch (err) {
+        console.error('Error polling converter progress:', err);
+    }
 }
 
 async function loadFormats() {
@@ -259,9 +306,10 @@ function renderTableRows() {
                 }
                 sizeHtml = `<span>${origFmt} → <strong>${newFmt}</strong> ${pctBadge}</span>`;
                 statusHtml = `<span class="badge badge-success">✓ Done</span>`;
+                const compareOrigPath = (res.source_deleted && res.trash_path) ? res.trash_path : file.path;
                 actionsHtml = `
                     <button class="btn btn-ghost btn-sm" onclick="openPreview('${(res.destination || file.path).replace(/'/g, "\\'")}')" title="Preview converted file">👁️ Converted</button>
-                    ${res.destination ? `<button class="btn btn-ghost btn-sm" onclick="openCompareModal('${file.path.replace(/'/g, "\\'")}', '${res.destination.replace(/'/g, "\\'")}')" title="Compare original vs converted">🔍 Compare</button>` : ''}
+                    ${res.destination ? `<button class="btn btn-ghost btn-sm" onclick="openCompareModal('${compareOrigPath.replace(/'/g, "\\'")}', '${res.destination.replace(/'/g, "\\'")}')" title="Compare original vs converted">🔍 Compare</button>` : ''}
                 `;
             } else if (res.status === 'error') {
                 statusHtml = `<span class="badge badge-danger">✕ Failed</span>`;
@@ -377,25 +425,36 @@ function populateBatchDropdowns() {
     let hasImage = false;
 
     selectedFiles.forEach(path => {
-        const ext = '.' + path.split('.').pop().toLowerCase();
-        if (['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'].includes(ext)) {
-            hasVideo = true;
+        const fileObj = scanResults.find(f => f.path === path);
+        if (fileObj && fileObj.type) {
+            if (fileObj.type === 'video') hasVideo = true;
+            else hasImage = true;
         } else {
-            hasImage = true;
+            const ext = '.' + path.split('.').pop().toLowerCase();
+            const vidExts = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.flv', '.wmv', '.ts', '.mpg', '.mpeg', '.3gp'];
+            if (vidExts.includes(ext)) {
+                hasVideo = true;
+            } else {
+                hasImage = true;
+            }
         }
     });
 
     if (videoDropdowns) videoDropdowns.style.display = hasVideo ? 'flex' : 'none';
-    if (imageDropdown) imageDropdown.style.display = hasImage && !hasVideo ? 'flex' : 'none';
+    if (imageDropdown) imageDropdown.style.display = hasImage ? 'flex' : 'none';
 
     if (hasVideo && containerSel && formatsData.video?.containers) {
-        containerSel.innerHTML = formatsData.video.containers.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
-        convOnBatchContainerChange();
+        if (!containerSel.innerHTML || containerSel.children.length === 0) {
+            containerSel.innerHTML = formatsData.video.containers.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+            convOnBatchContainerChange();
+        }
     }
 
     if (hasImage && imageTargetSel) {
-        const imgExts = ['.webp', '.avif', '.jpg', '.png', '.gif', '.bmp', '.tif'];
-        imageTargetSel.innerHTML = imgExts.map(e => `<option value="${e}">${e.toUpperCase().replace('.', '')}</option>`).join('');
+        if (!imageTargetSel.innerHTML || imageTargetSel.children.length === 0) {
+            const imgExts = ['.webp', '.avif', '.jpg', '.png', '.gif', '.bmp', '.tif'];
+            imageTargetSel.innerHTML = imgExts.map(e => `<option value="${e}">${e.toUpperCase().replace('.', '')}</option>`).join('');
+        }
     }
 }
 
@@ -423,8 +482,6 @@ export async function convConvertBatch() {
         batchSummary.innerHTML = '';
     }
 
-    let targetExt = '';
-    let codec = '';
     const hwaccel = document.getElementById('convHWAccel')?.value || 'auto';
     const deleteOriginal = document.getElementById('convDeleteOrig')?.checked || false;
 
@@ -433,16 +490,33 @@ export async function convConvertBatch() {
     const imageTargetSel = document.getElementById('convBatchTarget');
 
     let hasVideo = false;
+    let hasImage = false;
     selectedFiles.forEach(path => {
-        const ext = '.' + path.split('.').pop().toLowerCase();
-        if (['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'].includes(ext)) hasVideo = true;
+        const fileObj = scanResults.find(f => f.path === path);
+        if (fileObj && fileObj.type) {
+            if (fileObj.type === 'video') hasVideo = true;
+            else hasImage = true;
+        } else {
+            const ext = '.' + path.split('.').pop().toLowerCase();
+            const vidExts = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.flv', '.wmv', '.ts', '.mpg', '.mpeg', '.3gp'];
+            if (vidExts.includes(ext)) hasVideo = true;
+            else hasImage = true;
+        }
     });
 
+    let targetExt = '';
+    let imageTargetExt = '';
+    let videoTargetExt = '';
+    let codec = '';
+
     if (hasVideo) {
-        targetExt = extSel ? extSel.value : '.mp4';
+        videoTargetExt = extSel ? extSel.value : '.mp4';
         codec = codecSel ? codecSel.value : 'h264';
-    } else {
-        targetExt = imageTargetSel ? imageTargetSel.value : '.webp';
+        targetExt = videoTargetExt;
+    }
+    if (hasImage) {
+        imageTargetExt = imageTargetSel ? imageTargetSel.value : '.webp';
+        if (!targetExt) targetExt = imageTargetExt;
     }
 
     const progressCard = document.getElementById('convProgress');
@@ -455,6 +529,8 @@ export async function convConvertBatch() {
             body: JSON.stringify({
                 files: Array.from(selectedFiles),
                 target_ext: targetExt,
+                image_target_ext: imageTargetExt,
+                video_target_ext: videoTargetExt,
                 codec: codec,
                 hwaccel: hwaccel,
                 delete_original: deleteOriginal
@@ -468,6 +544,7 @@ export async function convConvertBatch() {
 
         const data = await res.json();
         currentConvertJobId = data.job_id;
+        startConvertPolling(currentConvertJobId);
         showToast('Batch conversion running in background...', 'info');
     } catch (err) {
         showToast(err.message, 'error');
@@ -496,9 +573,17 @@ export async function convDeleteBatch() {
             body: JSON.stringify({ files: Array.from(selectedFiles) })
         });
 
-        if (!res.ok) throw new Error('Deletion failed');
+        if (!res.ok) throw new Error('Deletion request failed');
         const data = await res.json();
-        showToast(`Moved files to Safe Trash (Freed: ${data.total_freed_formatted})`, 'success');
+        const results = data.results || [];
+        const failed = results.filter(r => r.status !== 'deleted');
+        const deletedCount = results.length - failed.length;
+
+        if (failed.length > 0) {
+            showToast(`Moved ${deletedCount} file(s) to Safe Trash, but ${failed.length} failed.`, 'warning');
+        } else {
+            showToast(`Moved ${deletedCount} file(s) to Safe Trash (Freed: ${data.total_freed_formatted || '0 B'})`, 'success');
+        }
         convScan();
     } catch (err) {
         showToast(err.message, 'error');
@@ -525,6 +610,17 @@ function updateConvertProgress(payload) {
     if (msg) msg.textContent = payload.current_file ? `Converting: ${payload.current_file.split('/').pop()}` : 'Converting...';
 
     const tableDiv = document.getElementById('convFileTable');
+
+    // Mark current active file row as converting
+    if (payload.current_file && tableDiv) {
+        const activeRow = findRowByPath(tableDiv, payload.current_file);
+        if (activeRow) {
+            const statusCell = activeRow.querySelector('.conv-status-cell');
+            if (statusCell && !conversionResults.has(payload.current_file)) {
+                statusCell.innerHTML = `<span class="badge badge-info">⏳ Converting…</span>`;
+            }
+        }
+    }
 
     // Update table rows dynamically
     if (payload.results && Array.isArray(payload.results)) {
@@ -559,7 +655,8 @@ function updateConvertProgress(payload) {
                     if (sizeCell) sizeCell.innerHTML = `<span>${origFmt} → <strong>${newFmt}</strong> ${pctBadge}</span>`;
                     if (actionCell) {
                         const safeDest = (res.destination || res.source).replace(/'/g, "\\'");
-                        const safeSrc = res.source.replace(/'/g, "\\'");
+                        const compareOrig = (res.source_deleted && res.trash_path) ? res.trash_path : res.source;
+                        const safeSrc = compareOrig.replace(/'/g, "\\'");
                         actionCell.innerHTML = `
                             <button class="btn btn-ghost btn-sm" onclick="openPreview('${safeDest}')" title="Preview converted file">👁️ Converted</button>
                             ${res.destination ? `<button class="btn btn-ghost btn-sm" onclick="openCompareModal('${safeSrc}', '${safeDest}')" title="Compare original vs converted">🔍 Compare</button>` : ''}

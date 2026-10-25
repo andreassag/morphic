@@ -184,6 +184,89 @@ func ListAuditHistory(ctx context.Context, pool *pgxpool.Pool, operation string,
 	return entries, total, nil
 }
 
+// ListActiveTrash returns audit_log entries for trashed items that are still active (not reversed/restored).
+func ListActiveTrash(ctx context.Context, pool *pgxpool.Pool, limit, offset int) ([]AuditEntry, int64, error) {
+	if pool == nil {
+		return nil, 0, nil
+	}
+
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var total int64
+	countQuery := `SELECT COUNT(*) FROM audit_log WHERE operation = 'delete' AND reversed_at IS NULL;`
+	if err := pool.QueryRow(ctx, countQuery).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting active trash: %w", err)
+	}
+
+	query := `
+		SELECT id, operation, original_path, COALESCE(destination_path, ''), COALESCE(trash_path, ''), COALESCE(file_size, 0), metadata, reversible, reversed_at, created_at
+		FROM audit_log
+		WHERE operation = 'delete' AND reversed_at IS NULL
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2;
+	`
+	rows, err := pool.Query(ctx, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("querying active trash: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(
+			&e.ID,
+			&e.Operation,
+			&e.OriginalPath,
+			&e.DestinationPath,
+			&e.TrashPath,
+			&e.FileSize,
+			&e.Metadata,
+			&e.Reversible,
+			&e.ReversedAt,
+			&e.CreatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scanning active trash entry: %w", err)
+		}
+		e.Source = extractSource(e.Metadata, e.Operation)
+		entries = append(entries, e)
+	}
+
+	return entries, total, nil
+}
+
+// DeleteAuditEntry permanently removes a single audit log row by ID.
+func DeleteAuditEntry(ctx context.Context, pool *pgxpool.Pool, id int64) error {
+	if pool == nil {
+		return nil
+	}
+	query := `DELETE FROM audit_log WHERE id = $1;`
+	_, err := pool.Exec(ctx, query, id)
+	return err
+}
+
+// DeleteAuditEntriesByTrashPaths removes audit entries matching any of the given trash paths.
+func DeleteAuditEntriesByTrashPaths(ctx context.Context, pool *pgxpool.Pool, trashPaths []string) error {
+	if pool == nil || len(trashPaths) == 0 {
+		return nil
+	}
+	query := `DELETE FROM audit_log WHERE trash_path = ANY($1);`
+	_, err := pool.Exec(ctx, query, trashPaths)
+	return err
+}
+
+// DeleteAllActiveTrashEntries removes all unreversed delete entries from audit_log.
+func DeleteAllActiveTrashEntries(ctx context.Context, pool *pgxpool.Pool) error {
+	if pool == nil {
+		return nil
+	}
+	query := `DELETE FROM audit_log WHERE operation = 'delete' AND reversed_at IS NULL;`
+	_, err := pool.Exec(ctx, query)
+	return err
+}
+
 func extractSource(metadata json.RawMessage, operation string) string {
 	if len(metadata) > 0 {
 		var m struct {

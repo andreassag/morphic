@@ -18,9 +18,10 @@ import (
 
 // UnifiedPlanEntry represents an organizer plan entry matching the API response.
 type UnifiedPlanEntry struct {
-	Source      string `json:"source"`
-	Destination string `json:"destination"`
-	Conflict    bool   `json:"conflict,omitempty"`
+	Source         string `json:"source"`
+	Destination    string `json:"destination"`
+	Conflict       bool   `json:"conflict,omitempty"`
+	ConflictReason string `json:"conflict_reason,omitempty"`
 }
 
 // ExecutionResult represents execution statistics.
@@ -161,6 +162,11 @@ func runPlan(ctx context.Context, job *ScanJob) {
 		job.Error = err.Error()
 		job.DoneAt = time.Now()
 		job.mu.Unlock()
+
+		if job.Pool != nil {
+			_ = database.UpdateJobStatus(context.Background(), job.Pool, job.ID, "failed", job.Progress, "Finding files failed", job.Error, nil)
+		}
+		events.DefaultBus.Publish("organizer", "job_failed", planResponse(job))
 		return
 	}
 
@@ -415,9 +421,10 @@ func planResponse(job *ScanJob) map[string]interface{} {
 					conflicts++
 				}
 				plan = append(plan, UnifiedPlanEntry{
-					Source:      e.Source,
-					Destination: e.Destination,
-					Conflict:    isConflict,
+					Source:         e.Source,
+					Destination:    e.Destination,
+					Conflict:       isConflict,
+					ConflictReason: e.Error,
 				})
 			}
 		} else {
@@ -427,9 +434,10 @@ func planResponse(job *ScanJob) map[string]interface{} {
 					conflicts++
 				}
 				plan = append(plan, UnifiedPlanEntry{
-					Source:      e.Source,
-					Destination: e.Destination,
-					Conflict:    isConflict,
+					Source:         e.Source,
+					Destination:    e.Destination,
+					Conflict:       isConflict,
+					ConflictReason: e.Error,
 				})
 			}
 		}
@@ -478,9 +486,10 @@ func GetUnifiedPlan(job *ScanJob) []UnifiedPlanEntry {
 		plan := make([]UnifiedPlanEntry, len(job.SortPlan))
 		for i, e := range job.SortPlan {
 			plan[i] = UnifiedPlanEntry{
-				Source:      e.Source,
-				Destination: e.Destination,
-				Conflict:    e.Status == "conflict",
+				Source:         e.Source,
+				Destination:    e.Destination,
+				Conflict:       e.Status == "conflict",
+				ConflictReason: e.Error,
 			}
 		}
 		return plan
@@ -489,9 +498,10 @@ func GetUnifiedPlan(job *ScanJob) []UnifiedPlanEntry {
 	plan := make([]UnifiedPlanEntry, len(job.RenamePlan))
 	for i, e := range job.RenamePlan {
 		plan[i] = UnifiedPlanEntry{
-			Source:      e.Source,
-			Destination: e.Destination,
-			Conflict:    e.Status == "conflict",
+			Source:         e.Source,
+			Destination:    e.Destination,
+			Conflict:       e.Status == "conflict",
+			ConflictReason: e.Error,
 		}
 	}
 	return plan

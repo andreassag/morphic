@@ -51,6 +51,8 @@
 .badge-info { background: var(--accent-dim); color: var(--accent); }
 .badge-primary { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(108, 123, 247, 0.3); }
 .badge-secondary { background: var(--surface3); color: var(--text-dim); }
+.badge-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+.badge-accent { background: var(--accent-dim); color: var(--accent); }
 
 .trash-thumb {
     width: 44px;

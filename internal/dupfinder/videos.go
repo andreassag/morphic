@@ -266,6 +266,31 @@ func computeVideoSimilarity(a, b *VideoInfo) float64 {
 		return 0
 	}
 
+	// Helper to extract 3 normalized representative hashes: first (start), middle, last (end)
+	sample3 := func(hashes []uint64) [3]uint64 {
+		n := len(hashes)
+		if n == 1 {
+			return [3]uint64{hashes[0], hashes[0], hashes[0]}
+		}
+		if n == 2 {
+			return [3]uint64{hashes[0], hashes[0], hashes[1]}
+		}
+		return [3]uint64{hashes[0], hashes[n/2], hashes[n-1]}
+	}
+
+	// If one is cached (3 frames) and one has more frames, compare the 3 matching representative frames
+	if len(a.FrameHashes) != len(b.FrameHashes) && (len(a.FrameHashes) == 3 || len(b.FrameHashes) == 3) {
+		sA := sample3(a.FrameHashes)
+		sB := sample3(b.FrameHashes)
+		var totalSim float64
+		for i := 0; i < 3; i++ {
+			dist := bits.OnesCount64(sA[i] ^ sB[i])
+			sim := 1.0 - float64(dist)/64.0
+			totalSim += sim
+		}
+		return totalSim / 3.0
+	}
+
 	minFrames := len(a.FrameHashes)
 	if len(b.FrameHashes) < minFrames {
 		minFrames = len(b.FrameHashes)

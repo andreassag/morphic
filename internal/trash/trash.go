@@ -92,6 +92,7 @@ func MoveToTrash(ctx context.Context, pool *pgxpool.Pool, filePath string, origi
 	if err != nil {
 		// Fallback to copy + delete across mount points / devices
 		if err := copyAndDelete(filePath, targetPath); err != nil {
+			_ = os.RemoveAll(destDir)
 			return 0, "", 0, fmt.Errorf("moving file to trash: %w", err)
 		}
 	}
@@ -168,6 +169,16 @@ func ListStandaloneTrash(operation string, limit, offset int) ([]database.AuditE
 		}
 		if operation != "" && m.Operation != operation {
 			continue
+		}
+		// If listing delete operations for Safe Trash, filter out already-restored items
+		if operation == "delete" && m.ReversedAt != nil {
+			continue
+		}
+		// Also verify the physical trashed file exists on disk
+		if m.TrashPath != "" {
+			if _, err := os.Stat(m.TrashPath); err != nil {
+				continue
+			}
 		}
 
 		src := m.Source
@@ -336,10 +347,28 @@ func ListStandaloneOperations(operation string, limit, offset int) ([]database.A
 	return all[offset:end], total, nil
 }
 
-// ListSafeTrash returns deleted files specifically for the Safe Trash view.
+// ListSafeTrash returns active deleted files specifically for the Safe Trash view.
 func ListSafeTrash(ctx context.Context, pool *pgxpool.Pool, limit, offset int) ([]database.AuditEntry, int64, error) {
 	if pool != nil {
-		return database.ListAuditHistory(ctx, pool, "delete", limit, offset)
+		entries, total, err := database.ListActiveTrash(ctx, pool, limit, offset)
+		if err != nil {
+			return nil, 0, err
+		}
+		// Filter out and clean up any stale DB entries whose trashed file no longer exists on disk
+		valid := make([]database.AuditEntry, 0, len(entries))
+		for _, e := range entries {
+			if e.TrashPath != "" {
+				if _, statErr := os.Stat(e.TrashPath); os.IsNotExist(statErr) {
+					_ = database.DeleteAuditEntry(ctx, pool, e.ID)
+					if total > 0 {
+						total--
+					}
+					continue
+				}
+			}
+			valid = append(valid, e)
+		}
+		return valid, total, nil
 	}
 	return ListStandaloneTrash("delete", limit, offset)
 }
@@ -422,20 +451,13 @@ func Restore(ctx context.Context, pool *pgxpool.Pool, auditID int64) error {
 		}
 	}
 
-	now := time.Now()
+	// Remove the UUID trash directory containing this item
+	trashParentDir := filepath.Dir(entry.TrashPath)
 	if metaDir != "" {
-		metaPath := filepath.Join(metaDir, "meta.json")
-		if data, err := os.ReadFile(metaPath); err == nil {
-			var m StandaloneMeta
-			if json.Unmarshal(data, &m) == nil {
-				m.ReversedAt = &now
-				if mb, err := json.MarshalIndent(m, "", "  "); err == nil {
-					_ = os.WriteFile(metaPath, mb, 0644)
-				}
-			}
-		}
-	} else {
-		_ = os.RemoveAll(filepath.Dir(entry.TrashPath))
+		_ = os.RemoveAll(metaDir)
+	}
+	if trashParentDir != "" && trashParentDir != GetTrashDir() {
+		_ = os.RemoveAll(trashParentDir)
 	}
 
 	// Mark action as reversed in database if pool is available
@@ -448,9 +470,125 @@ func Restore(ctx context.Context, pool *pgxpool.Pool, auditID int64) error {
 	return nil
 }
 
-// PurgeExpired deletes trashed files older than retentionDays.
+// DeleteItem permanently removes a trashed item by audit ID.
+func DeleteItem(ctx context.Context, pool *pgxpool.Pool, auditID int64) (int64, error) {
+	var entry *database.AuditEntry
+	var targetDir string
+
+	if pool != nil {
+		var err error
+		entry, err = database.GetAuditEntry(ctx, pool, auditID)
+		if err != nil {
+			return 0, fmt.Errorf("retrieving audit entry %d: %w", auditID, err)
+		}
+	}
+
+	trashDir := GetTrashDir()
+	if entry == nil {
+		entries, err := os.ReadDir(trashDir)
+		if err == nil {
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				dir := filepath.Join(trashDir, e.Name())
+				metaPath := filepath.Join(dir, "meta.json")
+				data, err := os.ReadFile(metaPath)
+				if err != nil {
+					continue
+				}
+				var m StandaloneMeta
+				if err := json.Unmarshal(data, &m); err == nil && m.ID == auditID {
+					entry = &database.AuditEntry{
+						ID:           m.ID,
+						Operation:    m.Operation,
+						OriginalPath: m.OriginalPath,
+						TrashPath:    m.TrashPath,
+						FileSize:     m.FileSize,
+					}
+					targetDir = dir
+					break
+				}
+			}
+		}
+	}
+
+	if entry == nil {
+		return 0, fmt.Errorf("trash item %d not found", auditID)
+	}
+
+	if targetDir == "" && entry.TrashPath != "" {
+		targetDir = filepath.Dir(entry.TrashPath)
+	}
+
+	var freedBytes int64
+	if targetDir != "" && targetDir != trashDir {
+		_ = filepath.Walk(targetDir, func(path string, f os.FileInfo, err error) error {
+			if err == nil && f != nil && !f.IsDir() {
+				if !strings.HasSuffix(f.Name(), "meta.json") {
+					freedBytes += f.Size()
+				}
+			}
+			return nil
+		})
+		_ = os.RemoveAll(targetDir)
+	}
+
+	if freedBytes == 0 && entry.FileSize > 0 {
+		freedBytes = entry.FileSize
+	}
+
+	if pool != nil {
+		_ = database.DeleteAuditEntry(ctx, pool, auditID)
+	}
+
+	return freedBytes, nil
+}
+
+// EmptyTrash permanently deletes all items currently in Safe Trash.
+func EmptyTrash(ctx context.Context, pool *pgxpool.Pool) (int, int64, error) {
+	trashDir := GetTrashDir()
+	entries, err := os.ReadDir(trashDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if pool != nil {
+				_ = database.DeleteAllActiveTrashEntries(ctx, pool)
+			}
+			return 0, 0, nil
+		}
+		return 0, 0, fmt.Errorf("reading trash directory: %w", err)
+	}
+
+	deletedCount := 0
+	freedBytes := int64(0)
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		itemPath := filepath.Join(trashDir, e.Name())
+		_ = filepath.Walk(itemPath, func(path string, f os.FileInfo, err error) error {
+			if err == nil && f != nil && !f.IsDir() {
+				if !strings.HasSuffix(f.Name(), "meta.json") {
+					freedBytes += f.Size()
+					deletedCount++
+				}
+			}
+			return nil
+		})
+		_ = os.RemoveAll(itemPath)
+	}
+
+	if pool != nil {
+		_ = database.DeleteAllActiveTrashEntries(ctx, pool)
+	}
+
+	return deletedCount, freedBytes, nil
+}
+
+// PurgeExpired deletes trashed files older than retentionDays. If retentionDays < 0, uses configured default.
 func PurgeExpired(ctx context.Context, pool *pgxpool.Pool, retentionDays int) (int, int64, error) {
-	if retentionDays <= 0 {
+	if retentionDays < 0 {
 		retentionDays = GetRetentionDays()
 	}
 
@@ -466,27 +604,47 @@ func PurgeExpired(ctx context.Context, pool *pgxpool.Pool, retentionDays int) (i
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 	purgedCount := 0
 	freedBytes := int64(0)
+	var purgedTrashPaths []string
 
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		itemPath := filepath.Join(trashDir, e.Name())
-		info, err := e.Info()
-		if err != nil {
-			continue
+
+		itemTime := time.Time{}
+		metaPath := filepath.Join(itemPath, "meta.json")
+		if data, err := os.ReadFile(metaPath); err == nil {
+			var m StandaloneMeta
+			if json.Unmarshal(data, &m) == nil && !m.CreatedAt.IsZero() {
+				itemTime = m.CreatedAt
+			}
 		}
-		if info.ModTime().Before(cutoff) {
-			// Walk directory to sum size and delete
+
+		if itemTime.IsZero() {
+			if info, err := e.Info(); err == nil {
+				itemTime = info.ModTime()
+			}
+		}
+
+		if retentionDays == 0 || (!itemTime.IsZero() && itemTime.Before(cutoff)) {
+			// Walk directory to sum size and delete, excluding meta.json
 			_ = filepath.Walk(itemPath, func(path string, f os.FileInfo, err error) error {
 				if err == nil && f != nil && !f.IsDir() {
-					freedBytes += f.Size()
-					purgedCount++
+					if !strings.HasSuffix(f.Name(), "meta.json") {
+						freedBytes += f.Size()
+						purgedCount++
+						purgedTrashPaths = append(purgedTrashPaths, path)
+					}
 				}
 				return nil
 			})
 			_ = os.RemoveAll(itemPath)
 		}
+	}
+
+	if pool != nil && len(purgedTrashPaths) > 0 {
+		_ = database.DeleteAuditEntriesByTrashPaths(ctx, pool, purgedTrashPaths)
 	}
 
 	return purgedCount, freedBytes, nil

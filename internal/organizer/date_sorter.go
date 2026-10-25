@@ -78,18 +78,41 @@ func RenderTemplate(tmpl string, date time.Time) string {
 // PlanSort creates a plan for sorting files into date-based folders.
 func PlanSort(files []string, template string, destination string) []SortPlanEntry {
 	var plan []SortPlanEntry
+	destSet := make(map[string]int) // destination -> first index
 
-	for _, path := range files {
+	for i, path := range files {
 		date := GetFileDate(path)
 		subDir := RenderTemplate(template, date)
 		destDir := filepath.Join(destination, subDir)
 		destPath := filepath.Join(destDir, filepath.Base(path))
 
-		plan = append(plan, SortPlanEntry{
+		entry := SortPlanEntry{
 			Source:      path,
 			Destination: destPath,
 			Status:      "pending",
-		})
+		}
+
+		if prevIdx, exists := destSet[destPath]; exists {
+			entry.Status = "conflict"
+			entry.Error = fmt.Sprintf("conflicts with file #%d", prevIdx+1)
+			plan[prevIdx].Status = "conflict"
+			if plan[prevIdx].Error == "" {
+				plan[prevIdx].Error = fmt.Sprintf("conflicts with file #%d", i+1)
+			}
+		} else {
+			destSet[destPath] = i
+			// Check if destination already exists on disk and is distinct from source
+			if _, err := os.Stat(destPath); err == nil {
+				absSrc, _ := filepath.Abs(path)
+				absDest, _ := filepath.Abs(destPath)
+				if absSrc != absDest {
+					entry.Status = "conflict"
+					entry.Error = "destination file already exists on disk"
+				}
+			}
+		}
+
+		plan = append(plan, entry)
 	}
 
 	return plan
@@ -100,6 +123,10 @@ func ExecuteSort(ctx context.Context, plan []SortPlanEntry, operation string) {
 	for i := range plan {
 		if ctx.Err() != nil {
 			return
+		}
+
+		if plan[i].Status == "conflict" {
+			continue
 		}
 
 		destDir := filepath.Dir(plan[i].Destination)
