@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/andreassag/morphic/internal/hasher"
 	"github.com/andreassag/morphic/internal/shared"
